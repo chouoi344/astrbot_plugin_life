@@ -1,0 +1,598 @@
+{
+  "schedule": {
+    "description": "生活日程",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用生活日程",
+        "type": "bool",
+        "default": false,
+        "hint": "新装时关闭。打开并保存后，按当前人设准备生活档案和日程。迁移旧版时沿用原启用状态。"
+      },
+      "runtime_revision": {
+        "description": "生活资料版本",
+        "type": "int",
+        "default": 0,
+        "invisible": true
+      },
+      "settings_saved": {
+        "description": "原生设置保存标记",
+        "type": "bool",
+        "default": false,
+        "invisible": true
+      },
+      "owner_ids": {
+        "description": "主人用户 ID",
+        "hint": "填写主人 QQ 号。留空使用 AstrBot 管理员。其他人的聊天仅读取状态。",
+        "type": "list",
+        "default": []
+      },
+      "schedule_time": {
+        "description": "每日生成时间 / 业务日分界线",
+        "hint": "HH:MM，使用 AstrBot 时区；修改后重载插件生效。",
+        "type": "string",
+        "default": "07:00"
+      },
+      "llm_provider": {
+        "description": "日程与档案模型",
+        "hint": "留空跟随 AstrBot 当前模型。",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
+      "judge_provider": {
+        "description": "聊天改日程判断模型",
+        "hint": "留空跟随日程模型，可选择较便宜的模型。",
+        "type": "string",
+        "_special": "select_provider",
+        "default": "",
+        "invisible": true
+      },
+      "image_provider": {
+        "description": "衣柜图片转写模型",
+        "hint": "需要支持视觉；留空跟随日程模型。",
+        "type": "string",
+        "_special": "select_provider",
+        "default": "",
+        "invisible": true
+      },
+      "inject_as_temp": {
+        "description": "将生活状态作为本轮临时内容注入",
+        "hint": "旧版缺少临时内容接口时自动使用系统提示词注入。",
+        "type": "bool",
+        "default": true,
+        "invisible": true
+      },
+      "reference_history_days": {
+        "description": "参考前几天的实际回顾",
+        "type": "int",
+        "default": 3,
+        "slider": {
+          "min": 1,
+          "max": 7,
+          "step": 1
+        },
+        "invisible": true
+      },
+      "reference_recent_count": {
+        "description": "生成日程参考的近期聊天条数",
+        "type": "int",
+        "default": 10,
+        "slider": {
+          "min": 0,
+          "max": 50,
+          "step": 1
+        },
+        "invisible": true
+      },
+      "default_reference_umo": {
+        "description": "主人的聊天来源（UID）",
+        "hint": "在目标 QQ 个人号私聊发送「参考会话 set」。参考会话用于识别你们的约定、接续聊天话题；没有可用参考会话时，日程照常使用全局模型。",
+        "type": "string",
+        "default": ""
+      },
+      "routine_jitter_minutes": {
+        "description": "起床 / 入睡时间每天随机浮动的分钟数",
+        "hint": "让作息不完全固定，更像真人；0 表示不浮动",
+        "type": "int",
+        "default": 20,
+        "slider": {
+          "min": 0,
+          "max": 60,
+          "step": 1
+        }
+      },
+      "surprise_probability": {
+        "description": "一天里偶尔发生计划外的事",
+        "hint": "0 表示关闭，1 表示每天都有，默认 0.5",
+        "type": "float",
+        "default": 0.5,
+        "slider": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        }
+      },
+      "auto_event_probability": {
+        "description": "每天允许 AI 新增长期事件的概率",
+        "type": "float",
+        "default": 0,
+        "slider": {
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        "invisible": true
+      },
+      "chat_change_enabled": {
+        "description": "主人聊天可以改变日程和记录约定",
+        "type": "bool",
+        "default": true
+      },
+      "change_trigger_keywords": {
+        "description": "聊天改日程的初筛关键词",
+        "hint": "命中关键词、时间表达或语音约定后才使用判断模型；即时想听语音本身不触发。",
+        "type": "list",
+        "default": [
+          "今晚",
+          "今天",
+          "明天",
+          "后天",
+          "等会",
+          "待会",
+          "一会儿",
+          "下班",
+          "放学",
+          "下课",
+          "睡前",
+          "起床",
+          "记得",
+          "答应",
+          "约好",
+          "说好",
+          "一言为定",
+          "早点睡",
+          "别熬夜",
+          "陪我",
+          "一起",
+          "改天",
+          "周末",
+          "下周",
+          "提醒",
+          "语音约定"
+        ]
+      },
+      "forbidden_interactions": {
+        "description": "角色与主人当前尚未开放的互动",
+        "hint": "普通语音消息已支持，旧语音限制按实时通话理解；后续生成使用当前能力。",
+        "type": "list",
+        "default": [
+          "连麦",
+          "语音通话",
+          "视频通话",
+          "一起打游戏",
+          "线下见面"
+        ],
+        "invisible": true
+      },
+      "weather": {
+        "description": "天气",
+        "type": "object",
+        "items": {
+          "enabled": {
+            "description": "获取 Open-Meteo 天气",
+            "hint": "关闭后使用已有缓存；没有缓存则由 AI 按城市和季节推测。",
+            "type": "bool",
+            "default": true
+          },
+          "city": {
+            "description": "角色所在城市",
+            "hint": "支持中文城市名；查不到时按档案和人设参考广州或北京的真实天气，保留原城市名。",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "outfit_no_repeat_days": {
+        "description": "穿搭避免重复的天数",
+        "type": "int",
+        "default": 3,
+        "slider": {
+          "min": 0,
+          "max": 7,
+          "step": 1
+        }
+      },
+      "extra_generation_prompt": {
+        "description": "生成日程的补充要求",
+        "hint": "填写生活偏好和补充限制；结构化时间轴的输出格式由插件管理。",
+        "type": "text",
+        "default": "",
+        "invisible": true
+      },
+      "history_keep_days": {
+        "description": "日程记录保留天数",
+        "type": "int",
+        "default": 30,
+        "invisible": true
+      },
+      "profile": {
+        "description": "角色生活档案",
+        "hint": "首次后台生成，可随时编辑；手动编辑后发送『档案已确认』。",
+        "type": "object",
+        "invisible": true,
+        "items": {
+          "identity": {
+            "description": "身份、年龄段与城市",
+            "type": "text",
+            "default": ""
+          },
+          "living": {
+            "description": "居住环境与同住的人",
+            "type": "text",
+            "default": ""
+          },
+          "routine_workday": {
+            "description": "工作日 / 上课日作息",
+            "type": "text",
+            "default": ""
+          },
+          "routine_restday": {
+            "description": "休息日作息",
+            "type": "text",
+            "default": ""
+          },
+          "weekly_fixed": {
+            "description": "每周固定安排",
+            "type": "text",
+            "default": ""
+          },
+          "periodic": {
+            "description": "周期性事项",
+            "type": "text",
+            "default": ""
+          },
+          "vacations": {
+            "description": "寒暑假和节假日规则",
+            "type": "text",
+            "default": ""
+          },
+          "social_circle": {
+            "description": "社交圈",
+            "hint": "一行一个人：名字｜关系｜一句话描述。",
+            "type": "text",
+            "default": ""
+          },
+          "hobbies_places": {
+            "description": "爱好与常去的地方",
+            "type": "text",
+            "default": ""
+          },
+          "phone_habits": {
+            "description": "手机使用习惯",
+            "type": "text",
+            "default": ""
+          }
+        }
+      },
+      "profile_persona_hash": {
+        "description": "档案对应的人设哈希",
+        "type": "string",
+        "default": "",
+        "invisible": true
+      },
+      "profile_persona_id": {
+        "description": "生活档案绑定的人设 ID",
+        "type": "string",
+        "default": "",
+        "invisible": true
+      },
+      "profile_generated_at": {
+        "description": "档案生成时间",
+        "type": "string",
+        "default": "",
+        "invisible": true
+      },
+      "wardrobe": {
+        "description": "衣柜穿搭方案",
+        "hint": "列表顺序就是穿搭编号；隐藏 ID 会保持展示图绑定。",
+        "type": "template_list",
+        "default": [],
+        "invisible": true,
+        "templates": {
+          "outfit": {
+            "name": "穿搭方案",
+            "display_item": "description",
+            "hide_hint_in_list": true,
+            "items": {
+              "id": {
+                "description": "稳定 ID",
+                "type": "string",
+                "default": "",
+                "invisible": true
+              },
+              "image_upload": {
+                "description": "上传图片提取穿搭",
+                "hint": "上传后保存配置，AI 会提取服装细节并建议分类和季节；人物外貌和场景会忽略。",
+                "type": "file",
+                "default": [],
+                "file_types": [
+                  "jpg",
+                  "jpeg",
+                  "png",
+                  "webp"
+                ]
+              },
+              "image_processed_hash": {
+                "description": "已提取图片的哈希",
+                "type": "string",
+                "default": "",
+                "invisible": true
+              },
+              "description": {
+                "description": "穿搭描述",
+                "hint": "填写服装、鞋袜、配饰、发型、妆容和造型细节。",
+                "type": "text",
+                "default": ""
+              },
+              "category": {
+                "description": "分类",
+                "type": "string",
+                "options": [
+                  "外出",
+                  "居家",
+                  "睡衣",
+                  "运动"
+                ],
+                "default": "外出"
+              },
+              "seasons": {
+                "description": "适合季节（可多选）",
+                "type": "list",
+                "options": [
+                  "春",
+                  "夏",
+                  "秋",
+                  "冬"
+                ],
+                "default": [
+                  "春",
+                  "夏",
+                  "秋",
+                  "冬"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "photo": {
+    "description": "自然照片",
+    "type": "object",
+    "items": {
+      "generate_enabled": {
+        "description": "启用文生图",
+        "type": "bool",
+        "default": true,
+        "hint": "2–4 张组照可能超过 AstrBot 默认工具等待时间。若同步等待组照经常超时，可把工具调用超时调到 1800 秒；后台任务无需一直等待，单张通常无需因此调整。"
+      },
+      "edit_enabled": {
+        "description": "启用改图",
+        "type": "bool",
+        "default": true
+      },
+      "selfie_enabled": {
+        "description": "启用自拍参考照",
+        "type": "bool",
+        "default": true,
+        "hint": "关闭后不使用角色参考图；文生图开启时仍可按文字要求拍照。"
+      },
+      "reference_images": {
+        "type": "list",
+        "default": [],
+        "invisible": true
+      },
+      "body_reference_images": {
+        "type": "list",
+        "default": [],
+        "invisible": true
+      },
+      "base_url": {
+        "description": "生图服务地址",
+        "type": "string",
+        "default": "",
+        "hint": "填写支持 OpenAI Images 的服务地址。"
+      },
+      "api_keys": {
+        "description": "API Key（可多个，轮流使用）",
+        "type": "list",
+        "default": []
+      },
+      "model": {
+        "description": "模型名称",
+        "type": "string",
+        "default": "",
+        "hint": "建议填 gpt-image 系列，需要支持多张参考图。"
+      }
+    }
+  },
+  "voice": {
+    "description": "自然语音",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用自然语音",
+        "type": "bool",
+        "default": true
+      },
+      "base_url": {
+        "description": "语音服务 URL",
+        "type": "string",
+        "default": "https://api.breeze.blue",
+        "hint": "填写兼容当前语音接口的服务地址，可带 /v1；保存后重新打开设置选择音色。"
+      },
+      "api_key": {
+        "description": "语音 API Key",
+        "type": "string",
+        "default": "",
+        "secret": false
+      },
+      "voice_id": {
+        "description": "音色",
+        "type": "string",
+        "default": "",
+        "options": [
+          ""
+        ],
+        "labels": [
+          "请选择音色"
+        ],
+        "hint": "填写服务 URL 和 API Key 并保存，重新打开设置后选择音色。"
+      }
+    }
+  },
+  "chat": {
+    "description": "自然私聊",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用自然私聊",
+        "type": "bool",
+        "default": false
+      },
+      "target_session": {
+        "description": "要接管的私聊",
+        "hint": "在目标 QQ 个人号私聊发送 /sid，粘贴返回的完整编号。保存后发一句普通消息，插件会自动识别机器人账号。一次设置一条私聊。",
+        "type": "string",
+        "default": ""
+      },
+      "busy_enabled": {
+        "description": "忙时暂存，空闲后回复",
+        "type": "bool",
+        "default": true
+      },
+      "proactive_enabled": {
+        "description": "空闲时有话题再主动开口",
+        "type": "bool",
+        "default": true
+      },
+      "daily_max": {
+        "description": "每天最多主动联系轮数",
+        "type": "int",
+        "default": 5,
+        "hint": "同一轮的文字分段、语音或照片只计一轮。正常聊天和忙完补回不计入，最小为 1。"
+      },
+      "max_unanswered": {
+        "description": "连续未回复上限",
+        "type": "int",
+        "default": 2,
+        "hint": "优先跟随当天日程的人设安排（1 到 4 次）；日程没有提供时使用此值。达到上限后暂停主动联系，收到新消息后重新计数。"
+      },
+      "voice_enabled": {
+        "description": "允许主动发语音",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，主动聊天可在合适时用语音。"
+      },
+      "photo_enabled": {
+        "description": "允许主动发照片",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，主动聊天可在合适时发照片。"
+      },
+      "daily_photo_max": {
+        "description": "每天最多主动发送照片次数",
+        "type": "int",
+        "default": 1,
+        "hint": "带照片的主动联系也算一轮。填 0 时当天不会主动发照片，正常聊天和补回时的照片不计入。"
+      },
+      "proactive_prompt": {
+        "description": "主动聊天提示词",
+        "type": "text",
+        "default": "你正处在自己真实运转的生活节奏中，此刻主动联系对方。请完全以你的人设性格、说话习惯与双方关系自然开口，展现出你有自己正在忙的事、当下的情绪温度或突然起意的主体性：优先从手头刚忙完的细节、眼前的生活切片、突然想起的某个具体话头或随口逗弄切入，严禁发送“在吗”“在干嘛呢”“注意休息/早点睡”等毫无灵魂的客服式问候或查岗，严禁出现“这笔账先记下/留着以后算”等记账体套话。若选择发文字（medium为text），严格遵守单行零空格、零换行与日常零逗号短句规则（普通分享用1~3个句号/问号短句；若吐槽翻车、讲趣事或情绪上头1~3句说不完，直接用句号/问号拆成4~6个零逗号短句连发）；若当前手头占着、在走动、刚睡醒或适合用声音传达而选择发语音（medium为voice），则切换为句内带逗号自然换气的一整句连贯口语并搭配1~2个声音标签。先结合最近聊天怎么收尾、当前时间与你的生活状态判断此刻是否适合打扰：若双方刚道过晚安、约定稍后再聊、话已聊透且无新生活进展，或当前状态不便联系，请直接选择 skip 保持安静；不要把同一次忙碌、集合、出发、训练、会议或未回复拆成多条连续汇报，也绝不追问对方为什么没回。",
+        "invisible": true
+      },
+      "attention_chance": {
+        "description": "轻忙时注意到连发消息的概率（备用）",
+        "type": "float",
+        "default": 0.35,
+        "invisible": true,
+        "hint": "优先跟随当天日程中的角色性格与状态；日程没有提供时才使用此值，范围 0 到 1。"
+      },
+      "reply_delay_min_seconds": {
+        "description": "刚空闲时最短等多久再回复（秒）",
+        "type": "int",
+        "default": 8,
+        "invisible": true,
+        "hint": "有积压消息时，在最短与最长时间之间随机等待；同一段空闲只等待一次。"
+      },
+      "reply_delay_max_seconds": {
+        "description": "刚空闲时最长等多久再回复（秒）",
+        "type": "int",
+        "default": 45,
+        "invisible": true,
+        "hint": "应大于或等于最短等待时间。等待时收到的新消息会一起处理。"
+      },
+      "silence_minutes": {
+        "description": "私聊安静多久后考虑新话题（分钟）",
+        "type": "float",
+        "default": 5,
+        "hint": "填 0 关闭。还需要角色当前有空、今天有尚未聊过的新生活内容，才会考虑主动联系。"
+      }
+    }
+  },
+  "qzone": {
+    "description": "QQ空间",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用 QQ 空间",
+        "hint": "关闭时不会在 QQ 空间发布、回评或读取。启用后可在使用 OneBot 的 QQ 会话里操作。",
+        "type": "bool",
+        "default": false
+      },
+      "auto_publish": {
+        "description": "自己分享日常",
+        "hint": "跟着角色的日程分享自拍、食物或场景；没有合适的内容时，可以少发或不发。",
+        "type": "bool",
+        "default": true
+      },
+      "daily_post_limit": {
+        "description": "每天最多自己发几条",
+        "hint": "0 表示暂停自己发日常，仍可按你的要求发空间、回复留言；你主动让TA发的另算。",
+        "type": "int",
+        "default": 2,
+        "slider": {
+          "min": 0,
+          "max": 5,
+          "step": 1
+        }
+      },
+      "auto_reply": {
+        "description": "回复我的留言",
+        "hint": "下一段能看手机的空闲日程里，分两轮查看当天说说的新评论；只回复管理员留言，昨天的说说不再自动查看。",
+        "type": "bool",
+        "default": true
+      },
+      "llm_provider_id": {
+        "description": "写说说、回评论的 AI",
+        "hint": "留空跟随聊天使用的 AI，也可以单独选择；看照片沿用 AstrBot 的识图设置。",
+        "type": "string",
+        "_special": "select_provider",
+        "default": ""
+      },
+      "failure_policy": {
+        "description": "自拍没拍好时",
+        "hint": "自己分享日常时，选择直接略过，或稍后再试；一直没拍好就安静略过，不会改发纯文字。",
+        "type": "string",
+        "options": [
+          "直接跳过",
+          "稍后重试"
+        ],
+        "default": "稍后重试"
+      }
+    }
+  }
+}

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>拟人生活</title>
+  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./references.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-icon" aria-hidden="true"><img src="./logo.png" alt=""></span><div class="brand-copy"><strong>拟人生活</strong><span>让日常，有迹可循</span></div></div>
+    <nav id="navigation" class="navigation" aria-label="拟人生活板块"></nav>
+    <div id="connection-state" class="connection" role="status"><span class="connection-dot" aria-hidden="true"></span><span class="connection-label">未连接 AstrBot</span></div>
+  </aside>
+  <main class="main">
+    <header class="page-header"><div><p class="eyebrow">拟人生活</p><h1 id="view-title">今日概况</h1><p id="view-subtitle" class="subtitle">看看此刻正在发生什么。</p></div><div id="view-actions" class="page-actions"></div></header>
+    <nav id="life-navigation" class="section-navigation" aria-label="日程与生活子页" hidden></nav>
+    <nav id="photos-navigation" class="section-navigation" aria-label="照片子页" hidden></nav>
+    <section id="setup-status" class="setup-status" aria-live="polite" aria-label="角色准备状态" hidden></section>
+    <section id="view-content" class="view-content" aria-live="polite"><div class="state-panel"><h2>正在打开拟人生活</h2><p>稍等一下，正在读取你的设置。</p></div></section>
+    <section id="photo-references" class="photo-references" hidden>
+      <section class="panel" aria-label="使用状态">
+        <p id="status" class="status" role="status">正在读取参考图配置…</p>
+        <div id="options" class="options" hidden></div>
+        <p class="settings">调整生图服务或功能开关，请打开 <strong>插件管理 → 拟人生活 → 设置 → 照片</strong>。</p>
+        <p class="hint">参考图库由拟人生活插件共用。删除会将图片移出参考图列表，原文件保留。</p>
+        <p id="library-error" class="warning" role="status" hidden></p>
+        <p id="read-only" class="hint" hidden>当前账号可查看参考图。上传、替换和删除需要面板管理员权限。</p>
+      </section>
+
+      <section id="references" hidden>
+        <section class="panel" aria-labelledby="face-title">
+          <div class="bar"><h2 id="face-title">人物面部三视图</h2><p id="face-count" class="count"></p></div>
+          <p class="hint">前三个位置显示上传角度建议。删除后，后续图片按顺序前移。</p>
+          <div id="face-grid" class="grid"></div>
+          <p id="face-upload-status" class="upload-status" role="status"></p>
+        </section>
+        <section class="panel" aria-labelledby="body-title">
+          <div class="bar"><h2 id="body-title">身材视图（选填）</h2><p id="body-count" class="count"></p></div>
+          <p class="hint">可选，最多上传三张全身图，拍单人全身照时参考身体比例。</p>
+          <p id="body-empty" class="hint" hidden>还没有身材参考图。</p>
+          <div id="body-grid" class="grid" hidden></div>
+          <div id="body-add" class="group-action" hidden></div>
+          <p id="body-upload-status" class="upload-status" role="status"></p>
+        </section>
+      </section>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="outfit-dialog" class="outfit-dialog" aria-labelledby="outfit-dialog-title">
+    <form id="outfit-form" class="outfit-form">
+      <header class="dialog-header"><div><p class="eyebrow">我的衣柜</p><h2 id="outfit-dialog-title">添加穿搭</h2></div><button id="outfit-close" class="icon-button" type="button" aria-label="关闭穿搭编辑">×</button></header>
+      <div class="dialog-content">
+        <label id="outfit-upload" class="upload-zone" for="outfit-image-input" tabindex="0">
+          <img id="outfit-preview" alt="当前穿搭图片预览" hidden>
+          <span id="outfit-upload-hint" class="upload-hint"><strong>点击或拖拽上传图片</strong><span>JPG / PNG / WebP，最大 20 MB</span><span>上传后自动识别穿搭细节</span></span>
+          <input id="outfit-image-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        </label>
+        <p id="outfit-upload-status" class="field-hint" role="status">只识别服装与造型，人物外貌和背景不会写入描述。</p>
+        <label class="field-label" for="outfit-description">穿搭描述</label>
+        <textarea id="outfit-description" class="text-input description-input" rows="5" required placeholder="服装、鞋袜、配饰、发型、妆容与材质细节…"></textarea>
+        <div class="dialog-fields"><div><label class="field-label" for="outfit-category">分类</label><select id="outfit-category" class="text-input"><option>外出</option><option>居家</option><option>睡衣</option><option>运动</option></select></div><fieldset class="season-field"><legend class="field-label">适合季节</legend><div id="outfit-seasons" class="season-options"></div></fieldset></div>
+        <p id="outfit-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <footer class="dialog-footer"><button id="outfit-cancel" class="button secondary" type="button">取消</button><button id="outfit-save" class="button primary" type="submit">保存穿搭</button></footer>
+    </form>
+  </dialog>
+  <dialog id="confirmation-dialog" class="outfit-dialog confirmation-dialog" aria-labelledby="confirmation-title" aria-describedby="confirmation-message">
+    <header class="dialog-header"><h2 id="confirmation-title">请确认</h2></header>
+    <p id="confirmation-message" class="confirmation-message"></p>
+    <footer class="dialog-footer">
+      <button id="confirmation-cancel" class="button secondary" type="button" autofocus>取消</button>
+      <button id="confirmation-accept" class="button primary" type="button">确认</button>
+    </footer>
+  </dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

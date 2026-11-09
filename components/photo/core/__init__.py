@@ -1,0 +1,1 @@
+"""Independent life-photo components."""
