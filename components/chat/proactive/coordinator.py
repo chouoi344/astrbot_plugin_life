@@ -144,6 +144,7 @@ class Coordinator:
         if (
             self.closed
             or not data["last_seen"]
+            or data["blocked_after_message"] == data["message_version"]
             or data["unanswered"] >= state.get("max_unanswered", self.settings.max_unanswered)
             or current["phone"] != "free"
             or rest_type(current) != "none"
@@ -409,6 +410,9 @@ class Coordinator:
                 elif status == "unknown":
                     self.note_unknown(turn)
                     return status
+                elif response.get("reply_required"):
+                    self.wait_for_message(turn)
+                    return "cancelled"
                 else:
                     self.ledger.finish_send(turn)
                     return status
@@ -421,6 +425,9 @@ class Coordinator:
         if status not in _STATUSES:
             raise ValueError("主动媒体返回未知发送状态")
         event_status = getattr(event, "delivery_status", None)
+        if getattr(event, "reply_required", False) is True:
+            self.wait_for_message(turn)
+            return "cancelled"
         if event_status in {"stopped", "cancelled"}:
             self.ledger.finish_send(turn)
             return "cancelled"
@@ -446,6 +453,10 @@ class Coordinator:
         else:
             self.ledger.finish_send(turn)
         return status
+
+    def wait_for_message(self, turn):
+        self.ledger.wait_for_message(turn)
+        logger.info("[生活主动消息] QQ 官方拒绝主动发送，收到对方新消息后再评估。")
 
     def clock(self, turn):
         state = self.linked.state()

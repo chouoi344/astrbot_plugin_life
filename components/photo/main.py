@@ -31,12 +31,15 @@ from astrbot.core.exceptions import ProviderNotFoundError
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
 from ...runtime import component_enabled
+from ..voice.core.compat import finish_direct_tool_delivery
 from ..voice.core.text import strip_voice_tags
 from ..voice.core.transport import send_native_private
 from .core.config import Settings, ordered_references_model, validate_request
 from .core.dashboard import PhotoDashboard
 from .core.delivery import (
     CAPTION_GUIDANCE,
+    NATIVE_CONFIRMED_SEND,
+    QQ_OFFICIAL_PLATFORMS,
     SEND_TIMEOUT,
     DeliveryCancelled,
     DeliveryRejected,
@@ -82,7 +85,6 @@ TOOL_NAME = "photo_generate"
 TURN_KEY = "_life_photo_request"
 LIFE_SNAPSHOT_KEY = "_life_photo_planning_life"
 BUSY_MEDIA_GUARD = "life_busy_media_guard_v1"
-NATIVE_CONFIRMED_SEND = "life_private_native_confirmed_send_v1"
 LAST_ATTEMPTED_TEXT = "_life_photo_last_attempted_text"
 LEGACY_WAITING_JOB = "_life_photo_legacy_waiting_job"
 LEGACY_VOICE_RECEIPT_COUNT = "_life_photo_legacy_voice_receipt_count"
@@ -1722,6 +1724,11 @@ class LifePhotoPlugin:
             validate_request(
                 user_prompt, photo_type, count, with_user_image, aspect_ratio, mode
             )
+            full_official_album = (
+                count == 4
+                and action != "resend"
+                and event.get_platform_name() in QQ_OFFICIAL_PLATFORMS
+            )
             if not isinstance(action, str) or action not in {
                 "generate",
                 "continue",
@@ -1732,7 +1739,7 @@ class LifePhotoPlugin:
                 raise ValueError("请选择当前聊天中可用的照片编号。")
             if use_current_scene is not None and type(use_current_scene) is not bool:
                 raise ValueError("是否按当前生活取景应为是或否。")
-            if action == "resend":
+            if action == "resend" or full_official_album:
                 waiting_text = ""
             elif not isinstance(waiting_text, str) or len(waiting_text) > 60:
                 raise ValueError("拍照前的等待提示请使用不超过60字的一条短话。")
@@ -1818,6 +1825,14 @@ class LifePhotoPlugin:
                 )
                 if facts["status"] == "stopped" and not facts["sent_count"]:
                     return tool_result(BUSY_MEDIA_STOPPED)
+            if full_official_album and facts["sent_count"] == count:
+                event.clear_result()
+                result = f"本次照片已确认发送{count}张，四张组照发送完毕。"
+                receipt = finish_direct_tool_delivery(event, TOOL_NAME, result)
+                if receipt is not None:
+                    return receipt
+                event.stop_event()
+                return tool_result(result)
             return tool_result(
                 f"本次照片已结束，已确认发送{facts['sent_count']}张，状态{facts['status']}。"
                 + (

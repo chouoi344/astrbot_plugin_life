@@ -16,7 +16,7 @@ _STATUS_CHAINS = {"tool_call", "reasoning", "agent_stats", "break"}
 PHOTO_ACK = "life_photo_ack_v1"
 Guard = Callable[[AstrMessageEvent], Awaitable[bool]]
 RecallHandler = Callable[[str, str, str, str], Awaitable[None]]
-IncomingHandler = Callable[[str, str, str, str], None]
+IncomingHandler = Callable[[str, str, str, str], bool | None]
 
 
 class DeliveryBlocked(RuntimeError):

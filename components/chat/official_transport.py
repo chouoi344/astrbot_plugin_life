@@ -1,6 +1,5 @@
 """Replay private messages through AstrBot's QQ Official adapters."""
 
-import random
 from contextvars import ContextVar
 from copy import deepcopy
 from urllib.parse import quote
@@ -10,7 +9,7 @@ from botpy.http import Route
 from botpy.message import C2CMessage
 
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import File, Image, Record, Video
+from astrbot.api.message_components import File, Image, Plain, Record, Video
 from astrbot.api.platform import AstrBotMessage, MessageType, Platform
 from astrbot.core.platform.sources.qqofficial.qqofficial_message_event import (
     QQOfficialMessageEvent,
@@ -22,18 +21,29 @@ from astrbot.core.platform.sources.qqofficial_webhook.qo_webhook_adapter import 
     QQOfficialWebhookPlatformAdapter,
 )
 
-from .replay_transport import Delivery, ReplayTransport
+from ..photo.core.qq_official_delivery import (
+    next_qq_official_reply_seq,
+    qq_media_upload_payload,
+)
+from .replay_transport import Delivery, DeliveryBlocked, ReplayTransport
 
 _OfficialAdapter = QQOfficialPlatformAdapter | QQOfficialWebhookPlatformAdapter
 _REPLAY = "life_busy_qq_official_replay"
 _REJECTION_STATUSES = {400, 401, 403, 404, 405, 413, 415, 422, 429}
 # QQ may return a business rejection in a non-4xx HTTP response.
-_REJECTION_CODES = {40034100, 40034105, 40054004, 40054013}
-_DEDUPLICATED = 40054005
+_REJECTION_CODES = {
+    "304103", "40034005", "40034024", "40034100", "40034105", "40034128",
+    "40054004", "40054013",
+}
+_DEDUPLICATED = "40054005"
 
 
 class _SendRejected(RuntimeError):
     """QQ explicitly rejected this request."""
+
+
+class QQReplyRejected(_SendRejected):
+    """The platform rejected the current reply context."""
 
 
 def _valid_id(value: object) -> bool:
@@ -47,10 +57,15 @@ def _valid_id(value: object) -> bool:
 def _validate_ack(result: object) -> None:
     if (
         not isinstance(result, dict)
-        or result.get("code", 0) != 0
         or not _valid_id(result.get("id"))
     ):
         raise RuntimeError("QQ 官方接口未返回有效消息编号。")
+
+
+def _response_codes(result) -> set[str]:
+    if not isinstance(result, dict):
+        return set()
+    return {str(result[key]).strip() for key in ("code", "err_code") if key in result} - {"0"}
 
 
 def _restore_hook(instance, name, hook, previous) -> None:
@@ -94,7 +109,8 @@ class OfficialTransport(ReplayTransport):
                 return await on_c2c(raw)
 
             origin = source(raw)
-            self.on_incoming(*origin)
+            if self.on_incoming(*origin) is False:
+                return await on_c2c(raw)
             token = incoming_raw.set((raw, origin))
             try:
                 return await on_c2c(raw)
@@ -259,6 +275,30 @@ class OfficialTransport(ReplayTransport):
             event.cleanup_temporary_local_files()
             raise
 
+    async def _upload(self, http, event, adapter, component, route_params):
+        payload = await qq_media_upload_payload(component)
+        if payload is None:
+            raise RuntimeError("QQ 官方附件格式或大小超过直接上传限制。")
+        if (
+            not await self.check(event)
+            or self.context.get_platform_inst(event.get_platform_id()) is not adapter
+            or event.bot.api._http is not http
+        ):
+            raise DeliveryBlocked("这轮补答已结束。")
+        route = Route("POST", "/v2/users/{openid}/files", **route_params)
+        async with http._session.request(
+            method=route.method,
+            url=route.url,
+            headers=http._headers,
+            timeout=aiohttp.ClientTimeout(total=http.timeout),
+            json={"openid": event.get_sender_id(), **payload},
+            allow_redirects=False,
+        ) as response:
+            result = await response.json(content_type=None)
+            if not 200 <= response.status < 300 or _response_codes(result):
+                raise RuntimeError("QQ 官方接口拒绝上传附件。")
+            return result
+
     async def _send(
         self, delivery: Delivery, adapter: _OfficialAdapter, message_chain: MessageChain
     ) -> bool:
@@ -268,52 +308,14 @@ class OfficialTransport(ReplayTransport):
         openid = event.get_sender_id()
         sent = False
         for chunk in event._split_message_chain_by_media(message_chain):
-            (
-                text,
-                image,
-                _,
-                record,
-                video,
-                file,
-                filename,
-            ) = await event._parse_to_qqofficial(chunk)
+            text = "".join(part.text for part in chunk.chain if isinstance(part, Plain))
+            component = next(
+                (part for part in chunk.chain if isinstance(part, (Image, Record, Video, File))),
+                None,
+            )
             parts = [("text", text)] if text.strip() else []
-            media = None
-            if any(isinstance(part, Image) for part in chunk.chain):
-                media = await event.upload_group_and_c2c_image(
-                    image, event.IMAGE_FILE_TYPE, openid=openid
-                )
-                parts.append(("image", ""))
-            else:
-                for kind, component, path, file_type in (
-                    ("record", Record, record, event.VOICE_FILE_TYPE),
-                    ("video", Video, video, event.VIDEO_FILE_TYPE),
-                    ("file", File, file, event.FILE_FILE_TYPE),
-                ):
-                    if not any(isinstance(part, component) for part in chunk.chain):
-                        continue
-                    if not path:
-                        raise RuntimeError("QQ 官方附件未能转换为可发送的文件。")
-                    media = await event.upload_group_and_c2c_media(
-                        path, file_type, file_name=filename, openid=openid
-                    )
-                    parts.append((kind, ""))
-                    break
-            if any(kind != "text" for kind, _ in parts):
-                file_info = media.get("file_info") if isinstance(media, dict) else None
-                if not _valid_id(file_info):
-                    raise RuntimeError("QQ 官方附件上传未返回有效文件信息。")
-                payload = {"msg_type": 7, "media": {"file_info": file_info}}
-                if text:
-                    payload["content"] = text
-            elif not parts:
+            if component is None and not parts:
                 continue
-            elif chunk.use_markdown_ is True:
-                payload = {"msg_type": 2, "markdown": {"content": text}}
-            else:
-                payload = {"msg_type": 0, "content": text}
-
-            payload["msg_seq"] = random.randint(1, 10000)
             http = event.bot.api._http
             try:
                 await http.check_session()
@@ -322,12 +324,37 @@ class OfficialTransport(ReplayTransport):
                 raise RuntimeError("QQ 官方客户端未能准备发送凭证。") from None
             if str(http._headers["X-Union-Appid"]) != str(adapter.appid):
                 raise RuntimeError("QQ 官方客户端的 AppID 与原会话不一致。")
-            route = Route(
-                "POST",
-                "/v2/users/{openid}/messages",
-                is_sandbox=http.is_sandbox,
-                openid=quote(openid, safe=""),
-            )
+            route_params = {"is_sandbox": http.is_sandbox, "openid": quote(openid, safe="")}
+            if isinstance(component, (Image, Record)):
+                media = await self._upload(http, event, adapter, component, route_params)
+                parts.append(("image" if isinstance(component, Image) else "record", ""))
+            elif component is not None:
+                _, _, _, _, video, file, filename = await event._parse_to_qqofficial(chunk)
+                if isinstance(component, Video):
+                    kind, path, file_type = "video", video, event.VIDEO_FILE_TYPE
+                else:
+                    kind, path, file_type = "file", file, event.FILE_FILE_TYPE
+                if not path:
+                    raise RuntimeError("QQ 官方附件未能转换为可发送的文件。")
+                media = await event.upload_group_and_c2c_media(
+                    path, file_type, file_name=filename, openid=openid
+                )
+                parts.append((kind, ""))
+            if component is not None:
+                file_info = media.get("file_info") if isinstance(media, dict) else None
+                if not _valid_id(file_info):
+                    raise RuntimeError("QQ 官方附件上传未返回有效文件信息。")
+                payload = {"msg_type": 7, "media": {"file_info": file_info}}
+                if text:
+                    payload["content"] = text
+            elif chunk.use_markdown_ is True:
+                payload = {"msg_type": 2, "markdown": {"content": text}}
+            else:
+                payload = {"msg_type": 0, "content": text}
+
+            payload["msg_id"] = event.message_obj.message_id
+            payload["msg_seq"] = next_qq_official_reply_seq(event)
+            route = Route("POST", "/v2/users/{openid}/messages", **route_params)
 
             async def post():
                 if (
@@ -347,23 +374,23 @@ class OfficialTransport(ReplayTransport):
                     allow_redirects=False,
                 ) as response:
                     try:
-                        result = await response.json()
+                        result = await response.json(content_type=None)
                     except (aiohttp.ContentTypeError, ValueError):
                         if response.status not in _REJECTION_STATUSES:
                             raise
                         result = None
-                    code = result.get("code") if isinstance(result, dict) else None
-                    if code == _DEDUPLICATED:
+                    codes = _response_codes(result)
+                    if _DEDUPLICATED in codes:
                         raise RuntimeError(
                             "QQ 官方接口报告消息已去重，实际送达未确认。"
                         )
-                    if isinstance(code, int) and code in _REJECTION_CODES:
-                        raise _SendRejected(f"QQ 官方接口拒绝发送（{code}）。")
-                    if response.status in _REJECTION_STATUSES:
-                        raise _SendRejected(
+                    if codes and codes <= _REJECTION_CODES:
+                        raise QQReplyRejected(f"QQ 官方接口拒绝回复（{', '.join(sorted(codes))}）。")
+                    if not codes and response.status in _REJECTION_STATUSES:
+                        raise QQReplyRejected(
                             f"QQ 官方接口拒绝发送（HTTP {response.status}）。"
                         )
-                    if not 200 <= response.status < 300:
+                    if codes or not 200 <= response.status < 300:
                         raise RuntimeError(
                             f"QQ 官方接口发送未确认（HTTP {response.status}）。"
                         )

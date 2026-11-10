@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+QQ_SEEN_LIMIT = 256
+
 
 @dataclass(frozen=True)
 class Scope:
@@ -95,6 +97,51 @@ class QueueStore:
                     PRIMARY KEY (umo, platform_type)
                 )
             """)
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS qq_reply_wait (
+                    session TEXT NOT NULL,
+                    persona TEXT NOT NULL,
+                    conversation TEXT NOT NULL,
+                    through_sequence INTEGER NOT NULL,
+                    PRIMARY KEY (session, persona, conversation)
+                )
+            """)
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS qq_inbound_seen (
+                    sequence INTEGER PRIMARY KEY,
+                    session TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    UNIQUE (session, message_id)
+                )
+            """)
+
+    def seen_qq_inbound(self, session: str, message_id: str) -> bool:
+        return self._db.execute(
+            """
+            SELECT 1 FROM qq_inbound_seen WHERE session = ? AND message_id = ?
+            UNION ALL
+            SELECT 1 FROM messages WHERE session = ? AND message_id = ?
+            LIMIT 1
+            """,
+            (session, message_id, session, message_id),
+        ).fetchone() is not None
+
+    def remember_qq_inbound(self, session: str, message_id: str) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT OR IGNORE INTO qq_inbound_seen (session, message_id) VALUES (?, ?)",
+                (session, message_id),
+            )
+            self._db.execute(
+                """
+                DELETE FROM qq_inbound_seen
+                WHERE session = ? AND sequence < (
+                    SELECT sequence FROM qq_inbound_seen WHERE session = ?
+                    ORDER BY sequence DESC LIMIT 1 OFFSET ?
+                )
+                """,
+                (session, session, QQ_SEEN_LIMIT - 1),
+            )
 
     def bound_bot(self, umo: str, platform_type: str) -> str:
         row = self._db.execute(
@@ -272,22 +319,50 @@ class QueueStore:
             )
             return True
 
-    def restore_rejected_delivery(self, batch: Batch) -> None:
-        """Restore an original batch only after its first send was explicitly rejected."""
+    def waiting_for_qq_reply(self, batch: Batch) -> bool:
+        scope = batch.scope
+        return self._db.execute(
+            """
+            SELECT 1 FROM qq_reply_wait
+            WHERE session = ? AND persona = ? AND conversation = ?
+                AND through_sequence >= ?
+            """,
+            (scope.session, scope.persona, scope.conversation, max(batch.revision)),
+        ).fetchone() is not None
+
+    def wait_for_qq_reply(self, batch: Batch, *, restore: bool = False) -> None:
         scope = batch.scope
         with self._db:
-            self._db.executemany(
-                "UPDATE messages SET status = 'pending' WHERE sequence = ? AND status = 'uncertain'",
-                ((sequence,) for sequence in batch.revision),
-            )
             self._db.execute(
                 """
-                UPDATE attention_episodes SET cutover = 0
-                WHERE session = ? AND persona = ? AND conversation = ?
+                INSERT INTO qq_reply_wait VALUES (?, ?, ?, ?)
+                ON CONFLICT (session, persona, conversation)
+                DO UPDATE SET through_sequence = MAX(through_sequence, excluded.through_sequence)
                 """,
-                (scope.session, scope.persona, scope.conversation),
+                (scope.session, scope.persona, scope.conversation, max(batch.revision)),
             )
-            self._clear_idle_attention(scope.session)
+            if restore:
+                self._restore_rejected_delivery(batch)
+
+    def restore_rejected_delivery(self, batch: Batch) -> None:
+        """Restore an original batch only after its first send was explicitly rejected."""
+        with self._db:
+            self._restore_rejected_delivery(batch)
+
+    def _restore_rejected_delivery(self, batch: Batch) -> None:
+        scope = batch.scope
+        self._db.executemany(
+            "UPDATE messages SET status = 'pending' WHERE sequence = ? AND status = 'uncertain'",
+            ((sequence,) for sequence in batch.revision),
+        )
+        self._db.execute(
+            """
+            UPDATE attention_episodes SET cutover = 0
+            WHERE session = ? AND persona = ? AND conversation = ?
+            """,
+            (scope.session, scope.persona, scope.conversation),
+        )
+        self._clear_idle_attention(scope.session)
 
     def finish_delivery(self, batch: Batch) -> None:
         with self._db:

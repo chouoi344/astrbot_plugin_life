@@ -16,16 +16,22 @@ from httpx import TransportError
 from PIL import Image as PillowImage
 from PIL import ImageOps
 
-from .qq_official_delivery import can_send_qq_official_photo, send_qq_official_photo
+from .qq_official_delivery import (
+    QQ_DIRECT_UPLOAD_LIMIT,
+    can_send_qq_official_photo,
+    send_qq_official_photo,
+)
 
 SEND_TIMEOUT = 60
 SEND_MAX_DIMENSION = 4096
 SEND_MAX_BYTES = 10 * 1024 * 1024
+QQ_SEND_MAX_BYTES = QQ_DIRECT_UPLOAD_LIMIT // 4 * 3
 FILE_THRESHOLD = 20 * 1024 * 1024
 MAX_DECODE_PIXELS = 64_000_000
 QQ_OFFICIAL_PLATFORMS = {"qq_official", "qq_official_webhook"}
 CONFIRMED_IMAGE_PLATFORMS = QQ_OFFICIAL_PLATFORMS
 PHOTO_ACK_CAPABILITY = "life_photo_ack_v1"
+NATIVE_CONFIRMED_SEND = "life_private_native_confirmed_send_v1"
 
 
 class DeliveryUnknown(RuntimeError):
@@ -100,12 +106,14 @@ async def rebuild_event(context, target: DeliveryTarget):
     return event
 
 
-def _prepare_jpeg(path: Path) -> bytes | None:
+def _prepare_jpeg(path: Path, *, qq_official: bool = False) -> bytes | None:
     """Work in memory: a cancelled to_thread call can never leave a late file."""
+    max_bytes = QQ_SEND_MAX_BYTES if qq_official else SEND_MAX_BYTES
     with PillowImage.open(path) as source:
         if (
             max(source.size) <= SEND_MAX_DIMENSION
-            and path.stat().st_size <= SEND_MAX_BYTES
+            and path.stat().st_size <= max_bytes
+            and (not qq_official or source.format in {"PNG", "JPEG"})
         ):
             return None
         if source.width * source.height > MAX_DECODE_PIXELS:
@@ -121,9 +129,9 @@ def _prepare_jpeg(path: Path) -> bytes | None:
             output = io.BytesIO()
             image.save(output, "JPEG", quality=95, subsampling=0)
             data = output.getvalue()
-            if len(data) <= SEND_MAX_BYTES:
+            if len(data) <= max_bytes:
                 return data
-            scale = min(0.9, math.sqrt(SEND_MAX_BYTES / len(data)) * 0.95)
+            scale = min(0.9, math.sqrt(max_bytes / len(data)) * 0.95)
             size = max(1, int(image.width * scale)), max(1, int(image.height * scale))
             if size == image.size:
                 raise ValueError("照片压缩后仍然过大，改用原文件发送")
@@ -237,10 +245,29 @@ async def _send_component(event, component, *, before_send=None, proactive=False
                     raise DeliveryRejected("平台明确拒绝发送本次照片。")
                 raise DeliveryUnknown("照片发送结果未确认，已停止重发以免重复")
 
-            status = await send_qq_official_photo(event, component, before_send=begin)
-            if status == "sent":
+            from astrbot.api.event import AstrMessageEvent
+
+            async def send_confirmed(_original_send, message, before_native_submit):
+                async def check():
+                    if before_native_submit is not None and not await before_native_submit():
+                        raise DeliveryCancelled("发送许可已撤回，本次照片已停止。")
+                    await begin()
+
+                status = await send_qq_official_photo(event, component, before_send=check)
+                if status == "sent":
+                    await AstrMessageEvent.send(event, message)
+                    return True
+                return False if status == "failed" else None
+
+            message = event.chain_result([component])
+            native_send = event.get_extra(NATIVE_CONFIRMED_SEND)
+            if native_send is not None:
+                accepted = await native_send(message, send_confirmed)
+            else:
+                accepted = await send_confirmed(None, message, None)
+            if accepted is True:
                 return
-            if status == "failed":
+            if accepted is False:
                 raise DeliveryRejected("平台未接受本次照片。")
             raise DeliveryUnknown("照片发送结果未确认，已停止重发以免重复")
 
@@ -395,7 +422,7 @@ async def send_photo(event, path: Path, *, before_send=None, proactive=False):
         return
     try:
         data = await asyncio.wait_for(
-            asyncio.to_thread(_prepare_jpeg, path), SEND_TIMEOUT
+            asyncio.to_thread(_prepare_jpeg, path, qq_official=image_only), SEND_TIMEOUT
         )
     except (OSError, ValueError, TimeoutError, asyncio.TimeoutError) as exc:
         if image_only:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import random
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -27,8 +26,6 @@ _NATIVE_EVENTS = {
     "qq_official_webhook": ("qqofficial.qqofficial_message_event", "QQOfficialMessageEvent"),
     "webchat": ("webchat.webchat_event", "WebChatMessageEvent"),
 }
-_QQ_REJECTED_STATUSES = frozenset({401, 403, 404, 405, 413, 415, 422, 429})
-_QQ_REJECTED_CODES = frozenset({40034100, 40034105, 40054004, 40054013})
 
 
 class SendCancelled(Exception):
@@ -50,20 +47,15 @@ def _native_platform(event: AstrMessageEvent, original_send=None) -> str:
     return ""
 
 
-def _qq_openid(event: AstrMessageEvent) -> str:
-    from botpy.message import C2CMessage
-
-    raw = event.message_obj.raw_message
-    if isinstance(raw, C2CMessage):
-        return raw.author.user_openid or ""
-    return ""
-
-
 def supports_native_target(event: AstrMessageEvent) -> bool:
     """QQ 官方原生语音只支持 C2C 私聊。"""
-    if _native_platform(event) in _QQ_OFFICIAL_PLATFORMS:
-        return bool(_qq_openid(event) and event.message_obj.message_id)
-    return True
+    if event.get_platform_name() not in _QQ_OFFICIAL_PLATFORMS:
+        return True
+    if event.get_extra("life_delivery_v1") is True and getattr(event, "supports_voice", False):
+        return True
+    from ...photo.core.qq_official_delivery import can_send_qq_official_photo
+
+    return can_send_qq_official_photo(event)
 
 
 def uses_confirmed_transport(event: AstrMessageEvent) -> bool:
@@ -75,31 +67,6 @@ def uses_confirmed_transport(event: AstrMessageEvent) -> bool:
 
 def _prepare_failed(platform: str, exc: Exception) -> None:
     logger.warning("[自然语音] %s 发送准备失败（%s）", platform, type(exc).__name__)
-
-
-def _qq_send_result(status: int, body: object) -> bool | None:
-    if status == 408 or not (200 <= status < 300 or 400 <= status < 500):
-        return None
-    if not isinstance(body, dict):
-        return None
-    rejection = False
-    for name in ("code", "err_code"):
-        code = body.get(name, 0)
-        if isinstance(code, str) and code.isascii() and code.isdecimal():
-            code = int(code)
-        if type(code) is not int:
-            return None
-        if code:
-            # 去重（40054005）及未知业务错误无法判断原消息是否送达。
-            if code not in _QQ_REJECTED_CODES:
-                return None
-            rejection = True
-    if rejection or status in _QQ_REJECTED_STATUSES:
-        return False
-    message_id = body.get("id")
-    if 200 <= status < 300 and isinstance(message_id, str) and message_id.strip():
-        return True
-    return None
 
 
 async def _send_onebot(
@@ -138,69 +105,16 @@ async def _send_onebot(
 
 
 async def _send_qq_official(
-    event: AstrMessageEvent, message: MessageChain, before_submit, allow_submit,
+    event: AstrMessageEvent, message: MessageChain, allow_submit,
 ) -> bool | None:
-    from aiohttp import ClientTimeout
-    from botpy.http import Route
+    from ...photo.core.qq_official_delivery import send_qq_official_reply
 
-    openid = _qq_openid(event)
-    if not openid or not event.message_obj.message_id:
-        return False
     if len(message.chain) != 1:
         return False
-    segment = message.chain[0]
-    payload = {"msg_id": event.message_obj.message_id, "msg_seq": random.randint(1, 10000)}
-    try:
-        if isinstance(segment, Record):
-            from astrbot.core.utils.media_utils import MediaResolver
-
-            source = segment.url or segment.file
-            if not source:
-                return False
-            resolver = MediaResolver(source, media_type="audio", default_suffix=".wav")
-            async with resolver.as_path(target_format="tencent_silk") as resolved:
-                before_submit()
-                media = await event.upload_group_and_c2c_media(
-                    str(resolved.path), 3, openid=openid, srv_send_msg=False
-                )
-            file_info = media.get("file_info") if isinstance(media, dict) else None
-            if not isinstance(file_info, str) or not file_info.strip():
-                return False
-            payload.update(msg_type=7, media=media)
-        elif isinstance(segment, Plain) and segment.text.strip():
-            payload.update(msg_type=0, content=segment.text)
-        else:
-            return False
-
-        http = event.bot.api._http
-        await http.check_session()
-    except asyncio.CancelledError:
-        before_submit()
-        raise
-    except SendCancelled:
-        raise
-    except Exception as exc:
-        _prepare_failed("qq_official", exc)
-        return False
-
-    # SDK 的高层方法会丢失回执或重试。复用已认证会话，只请求一次消息接口。
-    route = Route("POST", "/v2/users/{openid}/messages", openid=openid)
-    route.is_sandbox = http.is_sandbox
-    if not await allow_submit():
-        return False
-    async with http._session.request(
-        method=route.method,
-        url=route.url,
-        headers=http._headers,
-        json=payload,
-        timeout=ClientTimeout(total=http.timeout),
-        allow_redirects=False,
-    ) as response:
-        try:
-            result = await response.json(content_type=None)
-        except ValueError:
-            return None
-        return _qq_send_result(response.status, result)
+    status = await send_qq_official_reply(event, message.chain[0], before_send=allow_submit)
+    if status == "unknown":
+        return None
+    return status == "sent"
 
 
 async def _send_webchat(
@@ -269,10 +183,12 @@ async def send_native_private(
     if platform == "aiocqhttp":
         accepted = await _send_onebot(event, message, before_submit, allow_submit)
     elif platform in _QQ_OFFICIAL_PLATFORMS:
-        accepted = await _send_qq_official(event, message, before_submit, allow_submit)
+        accepted = await _send_qq_official(event, message, allow_submit)
     elif platform == "webchat":
         accepted = await _send_webchat(event, message, before_submit, allow_submit)
     else:
+        if event.get_platform_name() in _QQ_OFFICIAL_PLATFORMS:
+            return False
         if not await allow_submit():
             return False
         send = event.send if original_send is None else original_send

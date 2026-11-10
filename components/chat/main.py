@@ -30,8 +30,16 @@ from astrbot.core.star.session_plugin_manager import SessionPluginManager
 from astrbot.core.utils.active_event_registry import active_event_registry
 from astrbot.core.utils.session_lock import session_lock_manager
 
-from ...runtime import QQ_PLATFORM, component_enabled, get_component, is_qq_event, qq_platform
+from ...runtime import (
+    QQ_OFFICIAL_PLATFORMS,
+    QQ_PLATFORM,
+    component_enabled,
+    get_component,
+    is_qq_event,
+    qq_platform,
+)
 from .event_snapshot import capture, orphan_media_names, restore, snapshot_media_names
+from .official_transport import OfficialTransport, QQReplyRejected
 from .proactive.astrbot_bridge import AstrBotBridge
 from .proactive.coordinator import Coordinator
 from .proactive.ledger import Ledger
@@ -233,8 +241,12 @@ class LifeBusy:
             self.wakeup.set()
 
     def _attach_platform(self, adapter):
+        platform_name = adapter.meta().name
         if self.transport is None:
-            transport = QQTransport(
+            transport_type = (
+                OfficialTransport if platform_name in QQ_OFFICIAL_PLATFORMS else QQTransport
+            )
+            transport = transport_type(
                 self.context,
                 on_recall=self._on_recall,
                 on_incoming=self._on_incoming,
@@ -244,21 +256,28 @@ class LifeBusy:
             if not transport.is_attached(adapter):
                 return
             self.transport = transport
-            self.platform_type = QQ_PLATFORM
-            bound = self.store.bound_bot(self.umo, QQ_PLATFORM)
+            self.platform_type = platform_name
+            bound = self.store.bound_bot(self.umo, platform_name)
             active = self.chat_ledger.data
             active_bot = active["bot_self_id"]
             if active_bot and (
-                active["platform_name"] != QQ_PLATFORM
+                active["platform_name"] != platform_name
                 or (bound and bound != active_bot)
             ):
                 self.account_conflict = True
                 logger.error("[自然私聊] 暂存与主动消息记录中的机器人账号或平台不一致，已停止接管目标私聊。")
                 return
             if not bound and active_bot:
-                bound = self.store.bind_bot(self.umo, QQ_PLATFORM, active_bot)
+                bound = self.store.bind_bot(self.umo, platform_name, active_bot)
             self._set_bot(bound)
-        else:
+            if (
+                bound and platform_name in QQ_OFFICIAL_PLATFORMS
+                and (legacy_message_id := active.get("last_seen_message_id"))
+            ):
+                self.store.remember_qq_inbound(self.session, legacy_message_id)
+                del active["last_seen_message_id"]
+                self.chat_ledger.save()
+        elif platform_name == self.platform_type:
             self.transport.attach(adapter)
 
     def _set_bot(self, bot_id):
@@ -306,7 +325,8 @@ class LifeBusy:
         return (
             self.store is not None
             and self.transport is not None
-            and qq_platform(self.context, self.platform_id) is not None
+            and (adapter := qq_platform(self.context, self.platform_id)) is not None
+            and adapter.meta().name == self.platform_type
             and not self.closed
             and not self.account_conflict
             and bool(self.bot_id)
@@ -557,6 +577,13 @@ class LifeBusy:
             or (self.bot_id and self_id != self.bot_id)
         ):
             return
+        if (
+            self.platform_type in QQ_OFFICIAL_PLATFORMS
+            and self.store is not None
+            and self.session
+            and self.store.seen_qq_inbound(self.session, message_id)
+        ):
+            return False
         key = (self_id, message_id)
         count, received, _ = self.ingress.get(key, (0, self._arrival_time(), 0))
         self.ingress[key] = (
@@ -612,15 +639,25 @@ class LifeBusy:
                 self._set_bot(self.store.bind_bot(self.umo, self.platform_type, bot_id))
             if not self._matches_event(event):
                 return
+            official = self.platform_type in QQ_OFFICIAL_PLATFORMS
+            free_batch = None
+            if official:
+                if self.store.seen_qq_inbound(self.session, message_id):
+                    event.stop_event()
+                    return
+                # Commit any busy queue entry before suppressing future copies.
+                if self.busy_enabled:
+                    await self._route_reply(event, bot_id, message_id)
+                self.store.remember_qq_inbound(self.session, message_id)
             if self.proactive is not None:
                 text = "".join(
                     part.text for part in event.get_messages() if isinstance(part, Plain)
                 )
                 self.proactive.message_seen(bot_id, self.platform_type, text)
             if self.busy_enabled:
-                free_batch = await self._route_reply(event, bot_id, message_id)
+                if not official:
+                    free_batch = await self._route_reply(event, bot_id, message_id)
             else:
-                free_batch = None
                 event.set_extra(NORMAL_CHAT, True)
         if free_batch is not None:
             await self._wait_free_batch(event, free_batch)
@@ -632,6 +669,7 @@ class LifeBusy:
         start_free_batch = False
         if state:
             scope, phone, _ = state
+            official = self.platform_type in QQ_OFFICIAL_PLATFORMS
             pending = scope.conversation and self.store.has_pending(scope)
             if phone == "free" and not pending and self.busy_scope == scope:
                 self.busy_scope = None
@@ -642,9 +680,13 @@ class LifeBusy:
             if phone == "free" and not (
                 self.inflight
                 or self.proactive_ticket
-                or (pending and not pending_is_free)
+                or (pending and (official or not pending_is_free))
             ):
-                if QUIET_SECONDS <= 0 or self.free_batch is not None:
+                if (
+                    self.platform_type != QQ_PLATFORM
+                    or QUIET_SECONDS <= 0
+                    or self.free_batch is not None
+                ):
                     event.set_extra(NORMAL_CHAT, True)
                     return None
                 start_free_batch = True
@@ -1000,6 +1042,8 @@ class LifeBusy:
                 or not (batch := self.store.claim(scope))
             ):
                 return
+            if self.platform_type in QQ_OFFICIAL_PLATFORMS and self.store.waiting_for_qq_reply(batch):
+                return
             if phone == "free" and self._defer_busy_reply((scope, phone, start), snapshot, batch):
                 return
             self.resumable_free_scope = None
@@ -1074,12 +1118,19 @@ class LifeBusy:
                     return
             confirmed = delivery.sent and not delivery.failed and not replay.incomplete
             async with self.lock:
+                reply_rejected = isinstance(delivery.error, QQReplyRejected)
+                if reply_rejected:
+                    self.store.wait_for_qq_reply(
+                        batch, restore=delivery.rejected and not replay.glance,
+                    )
+                    logger.info("[忙碌状态] QQ 官方拒绝当前回复，等待对方发来新消息。")
                 if replay.glance:
                     if delivery.sent_texts:
                         self.store.record_attention(scope, "".join(delivery.sent_texts))
                 elif delivery.rejected:
-                    self.store.restore_rejected_delivery(batch)
-                    self._retry_later(batch)
+                    if not reply_rejected:
+                        self.store.restore_rejected_delivery(batch)
+                        self._retry_later(batch)
                 elif confirmed:
                     names = [
                         name
@@ -1091,7 +1142,8 @@ class LifeBusy:
                     self._remove_media(names)
                 elif replay.started:
                     self.store.close_attention(scope)
-                    logger.warning("[忙碌状态] 本轮发送结果未确认，原消息已留存。")
+                    if not reply_rejected:
+                        logger.warning("[忙碌状态] 本轮发送结果未确认，原消息已留存。")
                 elif not replay.superseded:
                     self._retry_later(batch)
             if delivery.sent:

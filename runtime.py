@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from astrbot.api.platform import MessageType
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
 
@@ -12,6 +13,8 @@ VOICE_ID = "astrbot_plugin_life_voice"
 CHAT_ID = "astrbot_plugin_life_busy"
 QZONE_ID = "astrbot_plugin_qzone_life"
 QQ_PLATFORM = "aiocqhttp"
+QQ_OFFICIAL_PLATFORMS = frozenset({"qq_official", "qq_official_webhook"})
+QQ_PLATFORMS = QQ_OFFICIAL_PLATFORMS | {QQ_PLATFORM}
 SECTIONS = {
     SCHEDULE_ID: "schedule",
     PHOTO_ID: "photo",
@@ -23,12 +26,20 @@ LEGACY_IDS = (*SECTIONS, "astrbot_plugin_life_proactive")
 
 
 def is_qq_event(event):
-    return event.get_platform_name() == QQ_PLATFORM
+    platform = event.get_platform_name()
+    if platform == QQ_PLATFORM:
+        return True
+    if platform not in QQ_OFFICIAL_PLATFORMS:
+        return False
+    from botpy.message import C2CMessage
+
+    raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+    return isinstance(raw, C2CMessage) and event.get_message_type() == MessageType.FRIEND_MESSAGE
 
 
 def qq_platform(context, platform_id):
     adapter = context.get_platform_inst(platform_id)
-    return adapter if adapter is not None and adapter.meta().name == QQ_PLATFORM else None
+    return adapter if adapter is not None and adapter.meta().name in QQ_PLATFORMS else None
 
 
 def legacy_conflicts(context, *, check_unloaded=False):

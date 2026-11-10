@@ -29,7 +29,7 @@ from .components.voice.core.provider import BreezeClient
 from .config import ComponentConfig
 from .dashboard_photos import PhotoHistory
 from .dashboard_qzone import qzone_status
-from .runtime import CHAT_ID, PHOTO_ID, QQ_PLATFORM, QZONE_ID, ROOT_PLUGIN_ID, SCHEDULE_ID, VOICE_ID
+from .runtime import CHAT_ID, PHOTO_ID, QQ_OFFICIAL_PLATFORMS, QQ_PLATFORMS, QZONE_ID, ROOT_PLUGIN_ID, SCHEDULE_ID, VOICE_ID
 
 _NO_CACHE = {"Cache-Control": "no-store"}
 _ASSET_ID = re.compile(r"[a-f0-9]{64}")
@@ -349,10 +349,10 @@ class NaturalLifeDashboard:
         if component is None:
             return {**result, "waiting_reason": "私聊组件暂未就绪。"}
         adapter = self.plugin.context.get_platform_inst(component.platform_id) if component.enabled else None
-        if adapter is not None and adapter.meta().name != QQ_PLATFORM:
-            return {**result, "status": "unbound", "waiting_reason": "请选择 QQ 个人号私聊作为目标。"}
+        if adapter is not None and adapter.meta().name not in QQ_PLATFORMS:
+            return {**result, "status": "unbound", "waiting_reason": "请选择 QQ 个人号或 QQ 官方机器人私聊作为目标。"}
         if not component.enabled or not component.session or component.account_conflict:
-            return {**result, "status": "unbound", "waiting_reason": "还没有可核对的 QQ 个人号目标私聊和机器人账号。"}
+            return {**result, "status": "unbound", "waiting_reason": "还没有可核对的 QQ 目标私聊和机器人账号，请保存后在目标私聊发一句消息。"}
 
         session = component.session
         persona_id, conversation_id = await component._current_role()
@@ -387,6 +387,10 @@ class NaturalLifeDashboard:
             reason = "有消息的送达结果待确认。" if uncertain else "当前没有待回消息。"
         elif not component.busy_enabled:
             reason = "忙碌补回已关闭，待回消息仍保留。"
+        elif component.platform_type in QQ_OFFICIAL_PLATFORMS and (
+            batch := component.store.claim(scope)
+        ) and component.store.waiting_for_qq_reply(batch):
+            reason = "QQ 官方暂不允许回复旧消息，积压已保留，等待对方发来新消息。"
         elif not component.transport.can_deliver(component.platform_id, component.bot_id, component.user_id):
             reason = "正在等私聊连接恢复。"
         elif phone == "offline":
@@ -420,6 +424,12 @@ class NaturalLifeDashboard:
             waiting = ledger.data["unanswered"] >= max_unanswered
             if ledger.data["hold"] == "user":
                 proactive_reason = "应用户要求，暂时不主动发消息。"
+            elif (
+                component.platform_type in QQ_OFFICIAL_PLATFORMS
+                and ledger.data.get("blocked_after_message") is not None
+                and ledger.data["blocked_after_message"] == ledger.data["message_version"]
+            ):
+                proactive_reason = "QQ 官方暂不允许发送，等待对方发来新消息后再考虑联系。"
             elif waiting:
                 proactive_reason = "已到连续主动未回应上限，正在等对方回应。"
             elif today_sent >= component.proactive_settings.daily_max:

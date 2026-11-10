@@ -168,7 +168,15 @@ class LLMClient:
         if not umo or not callable(lookup):
             return None
         adapter = lookup(umo.split(":", 1)[0])
-        return umo if adapter is not None and adapter.meta().name == "aiocqhttp" else None
+        if adapter is None:
+            return None
+        platform = adapter.meta().name
+        if platform == "aiocqhttp":
+            return umo
+        parts = umo.split(":", 2)
+        if platform in {"qq_official", "qq_official_webhook"} and len(parts) == 3 and parts[1] == "FriendMessage" and parts[2]:
+            return umo
+        return None
 
     async def chats(self, umo=None, count=None):
         if count is None:

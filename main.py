@@ -27,6 +27,8 @@ from .runtime import (
     CHAT_ID,
     LEGACY_IDS,
     PHOTO_ID,
+    QQ_PLATFORM,
+    QQ_OFFICIAL_PLATFORMS,
     QZONE_ID,
     ROOT_PLUGIN_ID,
     SCHEDULE_ID,
@@ -52,9 +54,12 @@ SCHEDULE_TOOLS = {
 }
 PHOTO_TOOL = "photo_generate"
 VOICE_TOOL = "tts_speak"
-VOICE_PLATFORMS = (
-    filter.PlatformAdapterType.AIOCQHTTP | filter.PlatformAdapterType.WEBCHAT
+QQ_ADAPTERS = (
+    filter.PlatformAdapterType.AIOCQHTTP
+    | filter.PlatformAdapterType.QQOFFICIAL
+    | filter.PlatformAdapterType.QQOFFICIAL_WEBHOOK
 )
+VOICE_PLATFORMS = QQ_ADAPTERS | filter.PlatformAdapterType.WEBCHAT
 QZONE_TOOLS = {
     "qzone_publish_photo",
     "qzone_delete_post",
@@ -67,9 +72,15 @@ QZONE_TOOLS = {
 TOOL_TEMPLATES = {}
 
 
+class OfficialPrivateOnly(CustomFilter):
+    def filter(self, event, cfg):
+        return event.get_platform_name() not in QQ_OFFICIAL_PLATFORMS or is_qq_event(event)
+
+
 def qq_command(name):
     def decorate(handler):
-        handler = filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)(handler)
+        handler = filter.platform_adapter_type(QQ_ADAPTERS)(handler)
+        handler = filter.custom_filter(OfficialPrivateOnly, False)(handler)
         return filter.command(name)(handler)
 
     return decorate
@@ -108,7 +119,7 @@ class BoundPrivate(CustomFilter):
     ROOT_PLUGIN_ID,
     "臭屁",
     "日程驱动的 QQ 拟人陪伴：忙闲回复、主动聊天、语音、自拍和 QQ 空间。网页聊天支持语音。",
-    "v1.3.10",
+    "v1.3.11",
 )
 class NaturalLife(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -242,6 +253,8 @@ class NaturalLife(Star):
             await chat.on_platform_loaded()
 
     async def _component_for(self, plugin_id, event, *, allow_disabled=False):
+        if plugin_id == QZONE_ID and event.get_platform_name() != QQ_PLATFORM:
+            return None
         if self._closed or not (
             is_qq_event(event)
             or (plugin_id == VOICE_ID and event.get_platform_name() == "webchat")
@@ -467,7 +480,8 @@ class NaturalLife(Star):
         return "当前会话未启用这项功能。"
 
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE, priority=100)
-    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP, priority=100)
+    @filter.custom_filter(OfficialPrivateOnly, False, priority=100)
+    @filter.platform_adapter_type(QQ_ADAPTERS, priority=100)
     async def photo_observe_group_material(self, event: AstrMessageEvent):
         """Only the immediately previous genuine private user turn may supply a stand-in."""
         if component := await self._component_for(PHOTO_ID, event):
@@ -596,6 +610,7 @@ class NaturalLife(Star):
                     yield result
 
     @filter.command("life_voice_test")
+    @filter.custom_filter(OfficialPrivateOnly, False)
     @filter.platform_adapter_type(VOICE_PLATFORMS)
     async def life_voice_test(self, event: AstrMessageEvent, *, text: str = ""):
         if component := await self._component_for(VOICE_ID, event, allow_disabled=True):
@@ -604,6 +619,7 @@ class NaturalLife(Star):
                     yield result
 
     @filter.command("life_voice_status")
+    @filter.custom_filter(OfficialPrivateOnly, False)
     @filter.platform_adapter_type(VOICE_PLATFORMS)
     async def life_voice_status(self, event: AstrMessageEvent):
         if component := await self._component_for(VOICE_ID, event, allow_disabled=True):

@@ -25,6 +25,7 @@ from astrbot.core.utils.session_lock import session_lock_manager
 
 from .delivery_error import ConversationGone
 from .delivery_error import DeliveryError as ProactiveSendError
+from .delivery_error import ReplyRequired
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -127,6 +128,7 @@ class _MediaEvent(AstrMessageEvent):
         self._bridge = bridge
         self.delivery_status: str | None = None
         self.platform_message_id: str | None = None
+        self.reply_required = False
         if recipient in bridge.context.get_config(bridge.target_umo).get(
             "admins_id", []
         ):
@@ -155,6 +157,7 @@ class _MediaEvent(AstrMessageEvent):
     async def send(self, message: MessageChain) -> bool:
         self.delivery_status = None
         self.platform_message_id = None
+        self.reply_required = False
         try:
             self.platform_message_id = await self._bridge._send_chain(
                 message,
@@ -164,6 +167,7 @@ class _MediaEvent(AstrMessageEvent):
                 on_attempt=self._mark_attempt,
             )
         except ProactiveSendError as exc:
+            self.reply_required = isinstance(exc, ReplyRequired)
             self.delivery_status = (
                 "cancelled" if exc.status == "stopped" and self._platform_name != "aiocqhttp"
                 else exc.status
@@ -431,6 +435,8 @@ class AstrBotBridge:
                 platform_name=platform_name,
                 before_send=before_send,
             )
+        except ReplyRequired as exc:
+            return {"status": exc.status, "reason": str(exc), "reply_required": True}
         except ProactiveSendError as exc:
             return {"status": exc.status, "reason": str(exc)}
         return {

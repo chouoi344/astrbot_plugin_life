@@ -36,6 +36,7 @@ class Ledger:
         self.data.setdefault("hold_until", "")
         self.data.setdefault("hold_started", "")
         self.data.setdefault("waiting_reply", None)
+        self.data.setdefault("blocked_after_message", None)
         if migrated:
             self.save()
 
@@ -109,6 +110,10 @@ class Ledger:
     def finish_send(self, turn):
         turn["send_in_flight"] = False
         self.save()
+
+    def wait_for_message(self, turn):
+        self.data["blocked_after_message"] = turn["message_version"]
+        self.finish_send(turn)
 
     def unknown_send(self, turn, now):
         self.data["completed"][turn["key"]] = turn["day"]

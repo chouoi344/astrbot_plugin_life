@@ -114,6 +114,7 @@ def _session_label(plugin, scope):
     return {
         "aiocqhttp": "QQ 私聊",
         "qq_official": "QQ 官方私聊",
+        "qq_official_webhook": "QQ 官方私聊",
         "webchat": "网页聊天",
         "weixin_oc": "微信私聊",
     }.get(kind, "私聊")

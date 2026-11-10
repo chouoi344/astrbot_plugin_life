@@ -34,6 +34,7 @@ TOOL_NAME = "tts_speak"
 TURN_KEY = "_life_voice_turn"
 DELIVERY_KEY = "life_voice_delivery_v1"
 BUSY_MEDIA_GUARD_KEY = "life_busy_media_guard_v1"
+NATIVE_CONFIRMED_SEND = "life_private_native_confirmed_send_v1"
 STREAM_FILTER_KEY = "_life_voice_stream_filtered"
 _PLATFORM_CANCELLED_STATUSES = ("stopped", "cancelled")
 _DUPLICATE_SPEECH = "本事件已发送相同台词"
@@ -269,6 +270,20 @@ class LifeVoicePlugin:
             await asyncio.gather(job, return_exceptions=True)
             raise
 
+    async def _send_confirmed_native(self, event, message):
+        native_send = event.get_extra(NATIVE_CONFIRMED_SEND)
+        if native_send is not None and event.get_platform_name() in {
+            "qq_official", "qq_official_webhook",
+        }:
+            async def confirm(original_send, message, before_native_submit):
+                return await send_native_private(
+                    event, message, before_submit=self._require_open,
+                    original_send=original_send, before_native_submit=before_native_submit,
+                )
+
+            return await native_send(message, confirm)
+        return await send_native_private(event, message, before_submit=self._require_open)
+
     async def _send_guarded_voice(self, event, text, before_send, *, native=False) -> dict:
         if self._closing:
             return _undelivered("cancelled")
@@ -311,9 +326,7 @@ class LifeVoicePlugin:
 
                 try:
                     if native:
-                        accepted = await send_native_private(
-                            event, message, before_submit=self._require_open
-                        )
+                        accepted = await self._send_confirmed_native(event, message)
                         if (
                             accepted is False
                             and medium == "voice"
@@ -323,10 +336,8 @@ class LifeVoicePlugin:
                         ):
                             # 只有明确未发出语音才回退。缺回执或出网异常不可重发。
                             medium = "text"
-                            accepted = await send_native_private(
-                                event,
-                                event.plain_result(speech.display_text),
-                                before_submit=self._require_open,
+                            accepted = await self._send_confirmed_native(
+                                event, event.plain_result(speech.display_text),
                             )
                     else:
                         accepted = await event.send(message)

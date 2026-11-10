@@ -9,15 +9,15 @@ from aiohttp import ClientTimeout
 from botpy.http import Route
 
 from astrbot.api.event import MessageChain
-from astrbot.api.message_components import Image, Plain, Record
+from astrbot.api.message_components import Plain
 from astrbot.core.platform.platform import PlatformStatus
-from astrbot.core.utils.media_utils import MediaResolver
 
-from .delivery_error import DeliveryError
+from ...photo.core.qq_official_delivery import qq_media_upload_payload
+from .delivery_error import DeliveryError, ReplyRequired
 
 _OPENID = re.compile(r"[A-Za-z0-9_-]+")
 _REJECTION_STATUSES = {401, 403, 404, 405, 413, 415, 422, 429}
-_REJECTION_CODES = {"40034100", "40034105", "40054004", "40054013"}
+_WAIT_FOR_REPLY_CODES = {"40034100", "40034105", "40054004", "40054013"}
 _DEDUPLICATED = "40054005"
 
 
@@ -28,9 +28,9 @@ def _check_response(status: int, result) -> dict:
     codes.discard("0")
     if _DEDUPLICATED in codes:
         raise DeliveryError("unknown", "QQ 官方接口报告消息被去重，实际送达未确认")
-    if (codes and codes <= _REJECTION_CODES) or (
-        not codes and status in _REJECTION_STATUSES
-    ):
+    if (codes and codes <= _WAIT_FOR_REPLY_CODES) or (not codes and status == 403):
+        raise ReplyRequired()
+    if not codes and status in _REJECTION_STATUSES:
         raise DeliveryError("failed", "QQ 官方接口拒绝本次请求")
     if codes or not 200 <= status < 300:
         raise DeliveryError("unknown", "QQ 官方接口结果未确认")
@@ -98,23 +98,13 @@ class QQOfficialTransport:
         component = message.chain[0]
         if isinstance(component, Plain) and component.text.strip():
             return {"msg_type": 0, "content": component.text}
-        if isinstance(component, Image) and component.file:
-            file_type = 1
-            resolver = MediaResolver(component.file, media_type="image")
-            target_format = None
-        elif isinstance(component, Record) and (
-            source := component.url or component.file
-        ):
-            file_type = 3
-            resolver = MediaResolver(source, media_type="audio", default_suffix=".wav")
-            target_format = "tencent_silk"
-        else:
-            raise DeliveryError("failed", "QQ 官方主动消息没有可发送的内容")
-        encoded = await resolver.to_base64(target_format=target_format)
+        payload = await qq_media_upload_payload(component)
+        if payload is None:
+            raise DeliveryError("failed", "QQ 官方附件格式或大小超过直接上传限制")
         result = await self._post_once(
             http,
             "files",
-            {"file_type": file_type, "file_data": encoded, "srv_send_msg": False},
+            {"openid": self.recipient, **payload},
         )
         file_info = result.get("file_info") if isinstance(result, dict) else None
         if not isinstance(file_info, str) or not file_info.strip():
@@ -128,6 +118,8 @@ class QQOfficialTransport:
         try:
             await http.check_session()
             payload = await self._payload(http, message)
+        except ReplyRequired:
+            raise
         except Exception as exc:
             # Nothing visible was sent. In particular, uploads use srv_send_msg=False.
             raise DeliveryError("failed", "QQ 官方主动消息准备失败") from exc
