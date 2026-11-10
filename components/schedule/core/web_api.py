@@ -7,7 +7,6 @@ import copy
 import hashlib
 import io
 import json
-import logging
 import math
 import re
 import tempfile
@@ -16,6 +15,8 @@ from datetime import date
 from pathlib import Path
 
 from PIL import Image
+
+from astrbot.api import logger as log
 
 from .calendar_info import get_calendar_info
 from .domain import DEFAULT_KEYWORDS, PROFILE_FIELDS
@@ -28,8 +29,6 @@ from .view import build_wardrobe_payload
 from .wardrobe import CATEGORIES, SEASONS, season_for_day
 
 from ....runtime import ROOT_PLUGIN_ID
-
-log = logging.getLogger("astrbot")
 
 
 class ViewError(ValueError):

@@ -2,11 +2,10 @@
 
 import copy
 import datetime as dt
-import logging
 import re
 from zoneinfo import ZoneInfo
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 _NAP = re.compile(
     r"^(?:(?:吃完午饭|吃完午餐|午饭后|午餐后|午间|午后|中午)[，、 ]*)?"

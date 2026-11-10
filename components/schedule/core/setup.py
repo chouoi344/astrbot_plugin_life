@@ -3,8 +3,9 @@
 import asyncio
 import copy
 import inspect
-import logging
 import uuid
+
+from astrbot.api import logger
 
 from .errors import describe_error, user_error
 from .llm import PersonaUnavailableError
@@ -296,5 +297,5 @@ class LifeSetup:
             if token == self.state.get("token"):
                 self.state.update(status="failed", error=user_error(exc))
                 self.save()
-            logging.getLogger("astrbot").warning("角色生活准备失败：%s", describe_error(exc))
+            logger.warning("角色生活准备失败：%s", describe_error(exc))
             return False

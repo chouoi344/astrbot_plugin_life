@@ -2,11 +2,11 @@
 
 import asyncio
 import copy
-import logging
 import re
 import unicodedata
 from datetime import timedelta
 
+from astrbot.api import logger as log
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Plain
@@ -26,7 +26,6 @@ from .core.timeline import format_timeline, parse_local
 from .core.wardrobe import wardrobe_html
 from .core.web_api import LifeViewAPI
 
-log = logging.getLogger("astrbot")
 PLUGIN_ID = "astrbot_plugin_life_scheduler_plus"
 
 

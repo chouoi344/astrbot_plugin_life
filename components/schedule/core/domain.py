@@ -3,18 +3,18 @@
 import copy
 import datetime as dt
 import json
-import logging
 import random
 import re
 import uuid
 from collections.abc import Mapping
 from zoneinfo import ZoneInfo
 
+from astrbot.api import logger
+
 from .timeline import parse_local, project_slot_rest
 
 from .errors import describe_error
 
-logger = logging.getLogger("astrbot")
 
 PROMISE_MISSED_AFTER = dt.timedelta(hours=2)
 

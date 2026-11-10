@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import logging
 import math
 from datetime import datetime
 
 import aiohttp
 
+from astrbot.api import logger
+
 from .errors import describe_error
 
-logger = logging.getLogger("astrbot")
 SOUTH_REGIONS = (
     "广东", "广州", "深圳", "福建", "泉州", "厦门", "浙江", "杭州", "江苏", "上海", "湖南", "湖北",
     "江西", "四川", "重庆", "云南", "贵州", "广西", "海南", "港澳台",

@@ -3,16 +3,15 @@
 import asyncio
 import copy
 import hashlib
-import logging
 import uuid
 from pathlib import Path
 
 from PIL import Image
 
+from astrbot.api import logger as log
+
 from .errors import describe_error, run_with_timeout, user_error
 from .storage import JsonStore
-
-log = logging.getLogger("astrbot")
 
 
 class WardrobeUploadProcessor:

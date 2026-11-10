@@ -4,15 +4,15 @@ import asyncio
 import hashlib
 import inspect
 import json
-import logging
 import re
 import uuid
+
+from astrbot.api import logger as log
 
 from .errors import describe_error, run_with_timeout
 from .domain import PROFILE_FIELDS
 from .model_queue import ModelQueue
 
-log = logging.getLogger("astrbot")
 
 MODEL_TIMEOUTS = {
     "profile": 180, "schedule": 180, "generation": 180,

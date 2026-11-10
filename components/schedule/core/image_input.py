@@ -4,14 +4,10 @@ import asyncio
 import base64
 from collections import deque
 from pathlib import Path
-import logging
+
+from astrbot.api import logger
 
 from .errors import describe_error, run_with_timeout
-
-try:
-    from astrbot.api import logger
-except ImportError:
-    logger = logging.getLogger("astrbot")
 
 _logged_legacy = False
 

@@ -4,7 +4,6 @@ import asyncio
 import copy
 import hashlib
 import json
-import logging
 import random
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12,6 +11,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from astrbot.api import logger as log
 
 from .calendar_info import get_calendar_info
 from .domain import (PROFILE_FIELDS, EventManager, PromiseManager, compute_routine,
@@ -34,7 +35,6 @@ from .weather import WeatherService
 
 from .errors import describe_error, retry_delay_minutes, user_error
 
-log = logging.getLogger("astrbot")
 PROFILE_WARNING = "人设正文已更新，生活资料保留；后续生成使用最新设定，档案可按需手动更新。"
 UNRECORDED_ACTIVITY = "此前安排未记录"
 DAY_CHAT_FIELDS = ("attention_chance", "max_unanswered", "wait_reply_reaction", "wait_reply_recover")

@@ -3,15 +3,14 @@
 import copy
 import datetime as dt
 import json
-import logging
 import os
 import tempfile
 import zipfile
 from pathlib import Path
 
-from .errors import describe_error
+from astrbot.api import logger
 
-logger = logging.getLogger("astrbot")
+from .errors import describe_error
 
 
 class JsonStore:

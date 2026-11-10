@@ -7,15 +7,13 @@ import base64
 import binascii
 import io
 import json
-import logging
 import re
 import warnings
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
+from astrbot.api import logger as log
 from PIL import Image, UnidentifiedImageError
-
-log = logging.getLogger("astrbot")
 
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
 MAX_IMAGE_PIXELS = 64_000_000

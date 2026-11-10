@@ -108,7 +108,7 @@ class BoundPrivate(CustomFilter):
     ROOT_PLUGIN_ID,
     "臭屁、yav434649-prog",
     "日程驱动的 QQ 拟人陪伴：忙闲回复、主动聊天、语音、自拍和 QQ 空间。网页聊天支持语音。",
-    "v1.3.7",
+    "v1.3.8",
 )
 class NaturalLife(Star):
     def __init__(self, context: Context, config: AstrBotConfig):

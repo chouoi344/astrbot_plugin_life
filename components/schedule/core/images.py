@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import io
-import logging
 import re
 import uuid
 from pathlib import Path
@@ -10,9 +9,9 @@ from urllib.parse import unquote, urlparse
 import aiohttp
 from PIL import Image, ImageOps
 
-from .errors import describe_error, run_with_timeout
+from astrbot.api import logger as log
 
-log = logging.getLogger("astrbot")
+from .errors import describe_error, run_with_timeout
 
 
 class WardrobeImageStore:

@@ -5,20 +5,18 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import logging
 import math
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from aiohttp import ClientConnectionError
+from astrbot.api import logger as log
 from httpx import TransportError
 from PIL import Image as PillowImage
 from PIL import ImageOps
 
 from .qq_official_delivery import can_send_qq_official_photo, send_qq_official_photo
-
-log = logging.getLogger("astrbot")
 
 SEND_TIMEOUT = 60
 SEND_MAX_DIMENSION = 4096

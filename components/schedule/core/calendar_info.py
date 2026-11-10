@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import date
+
+from astrbot.api import logger
 
 from .wardrobe import season_for_day
 
 from .errors import describe_error
 
-logger = logging.getLogger("astrbot")
 _warned_days = set()
 
 

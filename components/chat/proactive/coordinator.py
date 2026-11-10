@@ -1,14 +1,14 @@
 import asyncio
 import json
-import logging
 import re
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from astrbot.api import logger
+
 from .delivery_error import ConversationGone
 from .triggers import choose_trigger, contact_hold, rest_type, slot_time
 
-logger = logging.getLogger(__name__)
 _PHOTO_TYPES = {"selfie", "scene", "food", "outfit"}
 _SHOT_FIELDS = {"capture", "framing", "angle", "action", "expression"}
 _STATUSES = {"sent", "failed", "cancelled", "stopped", "unknown"}
