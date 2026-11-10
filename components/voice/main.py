@@ -15,7 +15,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Plain, Record
 from astrbot.api.star import Context, StarTools
 
-from .core.compat import preserve_direct_tool_history
+from .core.compat import finish_direct_tool_delivery
 from .core.config import Settings
 from .core.provider import BreezeClient, VoiceError
 from .core.text import MAX_TEXT_LENGTH, prepare_text, split_voice_tag_chunk, strip_voice_tags
@@ -36,6 +36,7 @@ DELIVERY_KEY = "life_voice_delivery_v1"
 BUSY_MEDIA_GUARD_KEY = "life_busy_media_guard_v1"
 STREAM_FILTER_KEY = "_life_voice_stream_filtered"
 _PLATFORM_CANCELLED_STATUSES = ("stopped", "cancelled")
+_DUPLICATE_SPEECH = "本事件已发送相同台词"
 
 
 @dataclass
@@ -289,7 +290,7 @@ class LifeVoicePlugin:
                 if signature in turn.proactive_unknown:
                     return _undelivered("unknown", "本事件同一台词的发送结果未确认")
                 if signature in turn.delivered:
-                    return _undelivered("cancelled", "本事件已发送相同台词")
+                    return _undelivered("cancelled", _DUPLICATE_SPEECH)
                 try:
                     if self._closing or (not native and (not await before_send() or self._closing)):
                         return _undelivered("cancelled")
@@ -392,19 +393,31 @@ class LifeVoicePlugin:
                 receipt = await self.send_proactive_voice(event, text, before_send=guard)
             event.clear_result()
             status = receipt["status"]
-            if status == "sent" or (
+            if status == "sent":
+                if receipt["deliveries"][0]["medium"] == "voice":
+                    tool_receipt = "语音已发送。"
+                else:
+                    tool_receipt = "语音未能发送，已改发文字。"
+                    logger.warning("[自然语音] %s", tool_receipt)
+            elif (
                 guard is None and status == "cancelled" and event.get_extra(DELIVERY_KEY)
             ):
-                preserve_direct_tool_history(event, TOOL_NAME)
+                tool_receipt = (
+                    "本轮已发送相同内容，已跳过重复发送。"
+                    if receipt.get("error") == _DUPLICATE_SPEECH
+                    else None
+                )
             else:
                 event.stop_event()
-            yield None
+                yield None
+                return
+            yield finish_direct_tool_delivery(event, TOOL_NAME, tool_receipt)
             return
 
         message = await self._send_speech(event, text)
         if message is None and not event.is_stopped():
-            preserve_direct_tool_history(event, TOOL_NAME)
-        # AstrBot 把 None 视为已直接发送，结束本轮模型循环，避免再补一条文字。
+            # 兼容旧发送接口，它不保证返回交付确认。
+            finish_direct_tool_delivery(event, TOOL_NAME, None)
         yield message
 
     async def life_voice_test(self, event: AstrMessageEvent, *, text: str = ""):
