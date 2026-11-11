@@ -1,11 +1,11 @@
 """Remove echoed AstrBot image notices from user-visible text."""
 
+import re
+import sys
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 from itertools import groupby
 from pathlib import PurePath
-import re
-import sys
 
 from astrbot.api.message_components import Plain
 from astrbot.core.message.components import BaseMessageComponent
@@ -29,14 +29,9 @@ class VisionNoticeFilter:
             for directory in directories
         )
         paths = "|".join(re.escape(path) for path in self._path_starts)
-        self._notice = re.compile(
-            rf"{re.escape(_START)}{_INDEX.pattern}(?:{paths}){_IMAGE_NAME}\]"
-        )
+        self._notice = re.compile(rf"{re.escape(_START)}{_INDEX.pattern}(?:{paths}){_IMAGE_NAME}\]")
         self._max_length = (
-            len(_START)
-            + _INDEX_DIGITS
-            + max(map(len, self._path_starts))
-            + len("20261107191332544_0638.jpeg]")
+            len(_START) + _INDEX_DIGITS + max(map(len, self._path_starts)) + len("20261107191332544_0638.jpeg]")
         )
 
     def clean_text(self, text: str) -> str:
@@ -86,17 +81,14 @@ class VisionNoticeFilter:
             if not path or (
                 index
                 and any(
-                    prefix.startswith(path)
-                    or (path.startswith(prefix) and "]" not in path[len(prefix) :])
+                    prefix.startswith(path) or (path.startswith(prefix) and "]" not in path[len(prefix) :])
                     for prefix in self._path_starts
                 )
             ):
                 return self.clean_text(text[:start]), tail
         return self.clean_text(text), ""
 
-    async def clean_stream(
-        self, generator: AsyncGenerator[MessageChain, None]
-    ) -> AsyncGenerator[MessageChain, None]:
+    async def clean_stream(self, generator: AsyncGenerator[MessageChain, None]) -> AsyncGenerator[MessageChain, None]:
         pending = None
         async for chunk in generator:
             if chunk.type is not None:

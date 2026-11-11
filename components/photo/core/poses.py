@@ -125,18 +125,6 @@ POSES = (
     },
 )
 
-_USER_POSE = re.compile(
-    r"俯拍|仰拍|俯视|仰视|平视|侧拍|低角度|高角度|45\s*[°度]|对镜|镜子|镜前|镜头入镜|手机入镜|"
-    r"全身|半身|大头照|特写|侧脸|正脸|正面|背影|肩膀以下|肩以下|歪头|托腮|捧脸|比[耶心]|"
-    r"剪刀手|看(?:向)?镜头|看窗外|闭眼|眨眼|蹲(?:着|下)|坐(?:着|在|姿)|站(?:着|在|姿)|躺(?:着|下|在)|"
-    r"趴(?:着|在)|回头|侧身|抱膝|叉腰|伸懒腰|从(?:上往下|下往上)|微笑|别笑|不要笑|笑一下|严肃|冷脸|"
-    r"举高|伸(?:出|远).*手|恋人视角|第三人|定时拍|抓拍|他拍|不露脸|不要露脸|不露(?:出)?脸|"
-    r"手持自拍|前置(?:摄像头|镜头|自拍)|不要自拍|别自拍|合影|合照|远景|中景|近景|广角|长焦|"
-    r"\b(?:pose|angle|mirror|overhead|low[- ]angle|high[- ]angle|front[- ]view|side[- ]view|"
-    r"full[- ]body|half[- ]body|close[- ]?up|self[- ]timer|wink|smile|smiling)\b",
-    re.IGNORECASE,
-)
-
 _SCENES = {
     "镜前": r"镜子|镜前|对镜|试衣镜|穿衣镜",
     "床上": r"床上|床边|床头|被窝|卧床|躺床",
@@ -145,10 +133,6 @@ _SCENES = {
     "户外": r"户外|室外|公园|街道|路上|海边|山上|校园|散步|出门|操场|花园",
     "室内": r"室内|家里|居家|客厅|宿舍|卧室|办公室|教室|图书馆|书房|房间|窗边",
 }
-
-
-def has_user_pose(user_prompt: str) -> bool:
-    return bool(_USER_POSE.search(user_prompt))
 
 
 _EXPRESSION_MOOD = r"(?:严肃|冷脸|害羞|委屈|生气|开心)"
@@ -162,9 +146,7 @@ REACTION_GUIDANCE = (
     "例如眉梢轻抬、视线偏开或脸颊微提。反应随对话变化，笑幅自然。"
     "用户明确要求保持表情、别笑或大笑时，按原话执行。"
 )
-_TEETH_SMILE = (
-    r"(?:(?:轻微|微微|略微|少量)?露[齿牙](?:笑)?|露出(?:一点|少量)?(?:牙齿|白牙|牙))"
-)
+_TEETH_SMILE = r"(?:(?:轻微|微微|略微|少量)?露[齿牙](?:笑)?|露出(?:一点|少量)?(?:牙齿|白牙|牙))"
 _EXAGGERATED_SMILE = (
     r"(?:(?:露[齿牙])?(?:开怀)?大笑|咧嘴(?:大笑|笑)?"
     r"|露出(?:一排|整排|满口|八颗|大片|大量)(?:牙齿|白牙|牙)|(?:大片|大量)露[齿牙](?:笑)?)"
@@ -180,9 +162,7 @@ _SMILE_NEGATION = (
     r"(?:再|特意|直接|太|过于|那么|这么|一直|刻意|画成)?"
 )
 _NEGATED_TEETH = re.compile(rf"{_SMILE_NEGATION}{_TEETH_SMILE}")
-_NEGATED_SMILE = re.compile(
-    rf"{_SMILE_NEGATION}(?:{_EXAGGERATED_SMILE}|{_TEETH_SMILE}|夸张|笑)"
-)
+_NEGATED_SMILE = re.compile(rf"{_SMILE_NEGATION}(?:{_EXAGGERATED_SMILE}|{_TEETH_SMILE}|夸张|笑)")
 _SMILE_SCALE = r"的?幅度|开|得|太|那么|这么"
 _NO_SMILE = re.compile(
     r"(?:别|不要|不许|不用|无需|避免)(?:再|一直)?"
@@ -214,11 +194,7 @@ _EXPRESSION_CUES = (
 
 
 def _cue_is_negated(match: re.Match) -> bool:
-    return bool(
-        _BEFORE_NEGATED_CUE.search(
-            match.string[max(0, match.start() - 6) : match.start()]
-        )
-    )
+    return bool(_BEFORE_NEGATED_CUE.search(match.string[max(0, match.start() - 6) : match.start()]))
 
 
 def _affirmative_smile_request(user_text: str) -> str:
@@ -238,23 +214,17 @@ def strong_smile_request(user_text: str) -> str:
 
 
 def suppresses_teeth(user_text: str) -> bool:
-    return any(
-        not re.search(r"太|过于|那么|这么", match.group())
-        for match in _NEGATED_TEETH.finditer(user_text)
-    )
+    return any(not re.search(r"太|过于|那么|这么", match.group()) for match in _NEGATED_TEETH.finditer(user_text))
 
 
 def suppresses_smile(user_text: str) -> bool:
     return bool(_NO_SMILE.search(user_text)) or any(
-        clause.strip() in {"不笑", "不微笑"}
-        for clause in _CLAUSE_BREAKS.split(user_text)
+        clause.strip() in {"不笑", "不微笑"} for clause in _CLAUSE_BREAKS.split(user_text)
     )
 
 
 def keeps_expression(user_text: str) -> bool:
-    return any(
-        not _cue_is_negated(match) for match in _KEEP_EXPRESSION.finditer(user_text)
-    )
+    return any(not _cue_is_negated(match) for match in _KEEP_EXPRESSION.finditer(user_text))
 
 
 def ordinary_smile_requested(user_text: str) -> bool:
@@ -264,16 +234,10 @@ def ordinary_smile_requested(user_text: str) -> bool:
 
 
 def wants_visible_reaction(user_text: str, summary: str) -> bool:
-    if (
-        keeps_expression(user_text)
-        or suppresses_smile(user_text)
-        or strong_smile_request(user_text)
-    ):
+    if keeps_expression(user_text) or suppresses_smile(user_text) or strong_smile_request(user_text):
         return False
     return bool(
-        re.search(
-            r"(?:看看|想看)[^，,。；;\n]{0,12}(?:什么反应|的反应|怎么反应)", user_text
-        )
+        re.search(r"(?:看看|想看)[^，,。；;\n]{0,12}(?:什么反应|的反应|怎么反应)", user_text)
         or re.search(
             r"角色[^，,。；;\n]{0,14}(?:逗笑|打趣|憋笑|愣了一下|惊讶)|后的(?:打趣|揶揄)(?:自拍|反应)",
             summary,
@@ -289,16 +253,12 @@ def _remove_expression_cues(text: str, cues: str) -> str:
     return adjusted.strip(" ，,。；;\n")
 
 
-def natural_smile_text(
-    text: str, *, no_smile: bool = False, no_teeth: bool = False
-) -> str:
+def natural_smile_text(text: str, *, no_smile: bool = False, no_teeth: bool = False) -> str:
     """Soften known exaggerated cues in model-authored text."""
     for pattern, replacement in _MODEL_SMILE_CUES:
         text = re.sub(
             pattern,
-            lambda match: (
-                match.group() if _cue_is_negated(match) else match.expand(replacement)
-            ),
+            lambda match: match.group() if _cue_is_negated(match) else match.expand(replacement),
             text,
         )
     if no_smile:
@@ -340,9 +300,7 @@ def user_constraints(user_text: str) -> dict[str, str]:
     for field, pattern in _DIMENSIONS.items():
         matches = list(dict.fromkeys(re.findall(pattern, user_text, re.IGNORECASE)))
         # Multiple alternatives belong in the per-shot plan, not a global lock.
-        if matches and not (
-            len(matches) > 1 and re.search(r"分别|各|都要|都来|或者|或是", user_text)
-        ):
+        if matches and not (len(matches) > 1 and re.search(r"分别|各|都要|都来|或者|或是", user_text)):
             clauses = [
                 clause.strip()
                 for clause in _CLAUSE_BREAKS.split(user_text)
@@ -393,9 +351,7 @@ def shot_field_key(field: str, value: str) -> str:
                 return mode
         return "handheld" if is_handheld_capture(key) else key
     if field == "gaze":
-        return next(
-            (mode for mode, pattern in _GAZE_MODES if re.search(pattern, key)), ""
-        )
+        return next((mode for mode, pattern in _GAZE_MODES if re.search(pattern, key)), "")
     if field == "framing":
         for frame, pattern in (
             ("full", r"全身|头到脚|full[- ]?body"),
@@ -456,9 +412,7 @@ def group_field_key(field: str, value: str) -> str:
         return shot_field_key(field, value)
     if field in {"framing", "action"}:
         patterns = _GROUP_FRAMING if field == "framing" else _GROUP_ACTIONS
-        return next(
-            (key for key, pattern in patterns if re.search(pattern, value, re.I)), ""
-        )
+        return next((key for key, pattern in patterns if re.search(pattern, value, re.I)), "")
     if field != "angle":
         return ""
 
@@ -531,29 +485,17 @@ def expression_options(mood: str, summary: str) -> tuple[str, ...]:
     )
 
 
-def choose_pose(
-    slot: dict, recent: list[str], user_prompt: str, photo_type: str, used: list[str]
-) -> dict | None:
+def choose_pose(slot: dict, recent: list[str], user_prompt: str, photo_type: str, used: list[str]) -> dict | None:
     """Use scene-compatible neutral habits, excluding the last three and this set."""
     if photo_type not in {"selfie", "outfit"}:
         return None
-    user_tags = {
-        name for name, pattern in _SCENES.items() if re.search(pattern, user_prompt)
-    }
+    user_tags = {name for name, pattern in _SCENES.items() if re.search(pattern, user_prompt)}
     context = str(slot.get("location", "")) + " " + str(slot.get("activity", ""))
-    tags = user_tags or {
-        name for name, pattern in _SCENES.items() if re.search(pattern, context)
-    }
+    tags = user_tags or {name for name, pattern in _SCENES.items() if re.search(pattern, context)}
     excluded = set(recent[-3:]) | set(used)
     candidates = [
-        item
-        for item in POSES
-        if item["tags"]
-        and tags.intersection(item["tags"])
-        and item["id"] not in excluded
+        item for item in POSES if item["tags"] and tags.intersection(item["tags"]) and item["id"] not in excluded
     ]
     if not candidates:
-        candidates = [
-            item for item in POSES if not item["tags"] and item["id"] not in excluded
-        ]
+        candidates = [item for item in POSES if not item["tags"] and item["id"] not in excluded]
     return random.choice(candidates) if candidates else None

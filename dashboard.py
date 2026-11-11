@@ -4,42 +4,60 @@ import asyncio
 import base64
 import inspect
 import json
-import math
 import re
-import time
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.web import json_response, request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-from .components.chat.main import ATTENTION_CHANCE, MAX_ATTEMPTS
-from .components.chat.proactive.triggers import rest_type as chat_rest_type
-from .components.chat.queue_store import Scope
+from .components.chat.proactive.linked import MEMORY_DEGRADED
+from .components.chat.proactive.triggers import HOLD_ASK_ATTEMPTS, HOLD_GIVE_UP_AFTER
+from .components.common.proxy import aiohttp_proxy
 from .components.photo.core.life import global_persona_id
 from .components.schedule.core.engine import UNRECORDED_ACTIVITY
 from .components.schedule.core.outfits import (
-    format_outfit_description, project_day_outfits, slot_outfit_key,
+    format_outfit_description,
+    project_day_outfits,
+    slot_outfit_key,
 )
 from .components.schedule.core.timeline import find_slots, project_slot_rest
 from .components.voice.core.config import Settings as VoiceSettings
 from .components.voice.core.provider import BreezeClient
-from .config import ComponentConfig
 from .dashboard_photos import PhotoHistory
 from .dashboard_qzone import qzone_status
-from .runtime import CHAT_ID, PHOTO_ID, QQ_OFFICIAL_PLATFORMS, QQ_PLATFORMS, QZONE_ID, ROOT_PLUGIN_ID, SCHEDULE_ID, VOICE_ID
+from .runtime import CHAT_ID, PHOTO_ID, QZONE_ID, ROOT_PLUGIN_ID, SCHEDULE_ID, VOICE_ID
 
 _NO_CACHE = {"Cache-Control": "no-store"}
 _ASSET_ID = re.compile(r"[a-f0-9]{64}")
 _PHONE = {"free", "glance", "offline"}
-_CHAT_SETTING_DEFAULTS = {
-    "attention_chance": ATTENTION_CHANCE,
-    "reply_delay_min_seconds": 8,
-    "reply_delay_max_seconds": 45,
-}
 _PLACEHOLDER_VOICES = {"已保存的音色", "原音色（暂不可用）"}
+
+
+def _hold_reason(row, hold_hours) -> str:
+    """Panel text for an expired "wait for me" reminder (sent ones fall through)."""
+    waited = f"对方说过忙完会来找你，已等满 {hold_hours:g} 小时"
+    tried = f"上次想问一句没发出（已试 {row['hold_attempts']}/{HOLD_ASK_ATTEMPTS} 次）"
+    quiet = "这期间不发其他主动消息。"
+    status = row["hold_status"]
+    if status == "due":
+        return f"{waited}，角色空下来时会自然问一句忙完了没有；{quiet}"
+    if status == "retrying":
+        at = row["hold_retry_at"]
+        try:
+            at = datetime.fromisoformat(at.replace("Z", "+00:00")).astimezone().strftime("%H:%M")
+        except ValueError:
+            at = "稍后"
+        return f"{waited}。{tried}，约 {at} 再试；{quiet}"
+    if status == "ready":
+        return f"{waited}。{tried}，角色空下来时再试；{quiet}"
+    if row["hold_attempts"] >= HOLD_ASK_ATTEMPTS:
+        why = f"到期提醒试了 {row['hold_attempts']} 次都没发出"
+    else:
+        why = f"到期后超过 {HOLD_GIVE_UP_AFTER.total_seconds() / 3600:g} 小时还没问出口"
+    return f"对方说过忙完会来找你，{why}，不再追问，等对方回来；其他主动消息照常。"
 
 
 class DashboardError(ValueError):
@@ -54,7 +72,9 @@ def _dashboard_admin(context):
     username = request.username
     dashboard = context.get_config().get("dashboard", {})
     if (
-        not username or username.startswith("api_key:") or not isinstance(dashboard, dict)
+        not username
+        or username.startswith("api_key:")
+        or not isinstance(dashboard, dict)
         or username != dashboard.get("username")
     ):
         return False
@@ -64,9 +84,7 @@ def _dashboard_admin(context):
         token = request.cookies.get("astrbot_dashboard_jwt", "")
     try:
         _, payload, _ = token.strip().split(".")
-        claims = json.loads(base64.b64decode(
-            payload + "=" * (-len(payload) % 4), altchars=b"-_", validate=True
-        ))
+        claims = json.loads(base64.b64decode(payload + "=" * (-len(payload) % 4), altchars=b"-_", validate=True))
     except (ValueError, UnicodeError):
         return False
     return (
@@ -127,7 +145,8 @@ def _current_life(scheduler, persona_id):
         return None, {}
     engine = scheduler.engine
     if (
-        engine.closed or not persona_id
+        engine.closed
+        or not persona_id
         or engine.setup.state.get("persona_id") != persona_id
         or engine.setup.state.get("status") != "ready"
         or engine.config.get("profile_persona_id") != persona_id
@@ -153,47 +172,23 @@ def _phone(slot):
     return value if value in _PHONE else None
 
 
-def _save_chat_settings(plugin, payload):
-    if not isinstance(payload, dict) or payload.keys() != _CHAT_SETTING_DEFAULTS.keys():
-        raise DashboardError("请填写偶尔看手机时的主动告知概率和补回等待时间。")
-    chance = payload["attention_chance"]
-    delay_min = payload["reply_delay_min_seconds"]
-    delay_max = payload["reply_delay_max_seconds"]
-    if type(chance) not in (int, float) or not 0 <= chance <= 1:
-        raise DashboardError("主动告知概率请填 0 到 1 之间的数字。")
-    if type(delay_min) is not int or type(delay_max) is not int or not 0 <= delay_min <= delay_max:
-        raise DashboardError("等待时间请填非负整数，最短时间不能超过最长时间。")
-
-    config = ComponentConfig(plugin.config, "chat", plugin._config_write_lock)
-    with plugin._config_write_lock:
-        before = config.copy()
-        latest = {**before, **config.read_saved_config()}
-        try:
-            config.save_config({**latest, **payload})
-        except Exception:
-            plugin.config[config.section] = before
-            raise
-        chat = plugin.components.get(CHAT_ID)
-        if chat is not None:
-            chat.attention_chance = chance
-            chat.reply_delay_min = delay_min
-            chat.reply_delay_max = delay_max
-
-
 def _voice_choices(voice):
     field = voice.config.schema["voice_id"]
-    return {
-        voice_id: name for voice_id, name in zip(field["options"], field["labels"])
-        if voice_id
-    }
+    return {voice_id: name for voice_id, name in zip(field["options"], field["labels"]) if voice_id}
 
 
 def _voice_result(voice, admin):
     if voice is None:
         return {
-            "status": "unavailable", "voice_id": None, "voice_name": None,
-            "configured": False, "can_write": False, "is_admin": admin, "options": [],
-            "availability": "unavailable", "message": "语音组件暂未就绪。",
+            "status": "unavailable",
+            "voice_id": None,
+            "voice_name": None,
+            "configured": False,
+            "can_write": False,
+            "is_admin": admin,
+            "options": [],
+            "availability": "unavailable",
+            "message": "语音组件暂未就绪。",
         }
     settings = voice.settings
     choices = _voice_choices(voice)
@@ -241,7 +236,13 @@ def _save_voice(plugin, voice, voice_id):
         client = voice.client
         if client is None:
             directory = Path(get_astrbot_data_path()) / "plugin_data" / VOICE_ID / "audio"
-            client = BreezeClient(settings.api_key, voice_id, directory, base_url=settings.base_url)
+            client = BreezeClient(
+                settings.api_key,
+                voice_id,
+                directory,
+                base_url=settings.base_url,
+                proxy=aiohttp_proxy(plugin.context, settings.base_url),
+            )
         before = config.copy()
         try:
             config.save_config({**latest, "voice_id": voice_id})
@@ -266,7 +267,8 @@ class NaturalLifeDashboard:
         for suffix, method, handler in (
             ("overview", "GET", self.overview),
             ("chat", "GET", self.chat),
-            ("chat/save", "POST", self.chat_save),
+            ("chat/event/delete", "POST", self.chat_event_delete),
+            ("chat/binding/reset", "POST", self.chat_binding_reset),
             ("photos", "GET", self.photos),
             ("photos/image", "GET", self.photo_image),
             ("voice", "GET", self.voice),
@@ -287,13 +289,15 @@ class NaturalLifeDashboard:
         except DashboardError as error:
             return json_response(
                 {"status": "error", "message": str(error)},
-                status_code=error.code, headers=_NO_CACHE,
+                status_code=error.code,
+                headers=_NO_CACHE,
             )
         except Exception as error:
             logger.warning("[拟人生活] 视图读取或保存失败（%s，%s）。", action.__name__, type(error).__name__)
             return json_response(
                 {"status": "error", "message": "这一区暂时无法读取或保存，请稍后刷新。"},
-                status_code=500, headers=_NO_CACHE,
+                status_code=500,
+                headers=_NO_CACHE,
             )
 
     async def overview(self):
@@ -302,9 +306,15 @@ class NaturalLifeDashboard:
     async def _overview(self):
         persona_id, name = await _global_persona(self.plugin.context)
         result = {
-            "status": "unavailable", "persona_id": persona_id, "persona_name": name,
-            "activity": None, "location": None, "outfit": None, "mood": None,
-            "mood_intensity": None, "phone": None,
+            "status": "unavailable",
+            "persona_id": persona_id,
+            "persona_name": name,
+            "activity": None,
+            "location": None,
+            "outfit": None,
+            "mood": None,
+            "mood_intensity": None,
+            "phone": None,
         }
         scheduler = self.plugin.components.get(SCHEDULE_ID)
         if not self.plugin.config["schedule"]["enabled"]:
@@ -319,7 +329,8 @@ class NaturalLifeDashboard:
         outfits = project_day_outfits(day, scheduler.config.get("wardrobe", []))
         outfit = next((row["description"] for row in outfits if row["key"] == outfit_key), "")
         return {
-            **result, "status": "ready",
+            **result,
+            "status": "ready",
             "activity": current.get("activity") or None,
             "location": current.get("location") or None,
             "outfit": outfit or format_outfit_description(current.get("outfit", "")) or None,
@@ -334,142 +345,107 @@ class NaturalLifeDashboard:
     async def _chat(self):
         component = self.plugin.components.get(CHAT_ID)
         config = self.plugin.config["chat"]
+        admin = _dashboard_admin(self.plugin.context)
         result = {
-            "status": "unavailable", "persona_id": None, "pending_count": None,
-            "settings": {key: config.get(key, default) for key, default in _CHAT_SETTING_DEFAULTS.items()},
-            "can_write": _dashboard_admin(self.plugin.context),
-            "uncertain_count": None, "waiting_reason": "", "phone": None,
-            "reply_wait_seconds": None, "proactive_sent_today": None,
-            "proactive_daily_limit": config.get("daily_max") if config.get("proactive_enabled") else None,
-            "proactive_waiting_response": None,
-            "proactive_reason": None,
+            "status": "unavailable",
+            "targets": [],
+            "can_write": admin,
+            "proactive_enabled": bool(config.get("proactive_enabled")),
+            "daily_limit": config.get("daily_max"),
+            "max_unanswered": config.get("max_unanswered"),
+            "memory_notice": None,
+            "message": "",
         }
         if not config["enabled"]:
-            return {**result, "status": "disabled", "waiting_reason": "私聊功能已关闭。"}
+            return {**result, "status": "disabled", "message": "私聊功能已关闭。"}
         if component is None:
-            return {**result, "waiting_reason": "私聊组件暂未就绪。"}
-        adapter = self.plugin.context.get_platform_inst(component.platform_id) if component.enabled else None
-        if adapter is not None and adapter.meta().name not in QQ_PLATFORMS:
-            return {**result, "status": "unbound", "waiting_reason": "请选择 QQ 个人号或 QQ 官方机器人私聊作为目标。"}
-        if not component.enabled or not component.session or component.account_conflict:
-            return {**result, "status": "unbound", "waiting_reason": "还没有可核对的 QQ 目标私聊和机器人账号，请保存后在目标私聊发一句消息。"}
-
-        session = component.session
-        persona_id, conversation_id = await component._current_role()
-        current_id = await self.plugin.context.conversation_manager.get_curr_conversation_id(component.umo)
-        if (
-            self.plugin.components.get(CHAT_ID) is not component or component.closed
-            or session != component.session or not persona_id or not conversation_id
-            or current_id != conversation_id
-        ):
-            return {**result, "status": "unbound", "waiting_reason": "当前私聊还没有可读取的人设或对话。"}
-
-        scope = Scope(session, persona_id, conversation_id)
-        counts = dict(component.store._db.execute(
-            "SELECT status,COUNT(*) FROM messages WHERE session=? AND persona=? AND conversation=? "
-            "AND status IN ('pending','uncertain') GROUP BY status",
-            (scope.session, scope.persona, scope.conversation),
-        ))
-        pending = counts.get("pending", 0)
-        uncertain = counts.get("uncertain", 0)
+            return {**result, "message": "私聊组件暂未就绪。"}
+        if not component.settings.targets:
+            return {**result, "status": "unbound", "message": "还没有填写目标私聊。"}
+        if component.linked.memory_degraded():
+            result["memory_notice"] = MEMORY_DEGRADED + "。"
         scheduler = self.plugin.components.get(SCHEDULE_ID)
-        slot, day = _current_life(scheduler, persona_id)
+        persona_id, _ = await _global_persona(self.plugin.context)
+        slot, _ = _current_life(scheduler, persona_id)
         phone = _phone(slot)
-        if slot and chat_rest_type(slot) != "none":
+        if slot and slot.get("rest_type", "none") != "none":
             phone = "offline"
-        remaining = None
-        if component.busy_reply_delay and component.busy_reply_delay[0] == scope:
-            remaining = max(0, math.ceil(component.busy_reply_delay[2] - time.monotonic())) or None
-
-        if component.inflight and pending:
-            reason = "正在处理这一轮待回消息。"
-        elif not pending:
-            reason = "有消息的送达结果待确认。" if uncertain else "当前没有待回消息。"
-        elif not component.busy_enabled:
-            reason = "忙碌补回已关闭，待回消息仍保留。"
-        elif component.platform_type in QQ_OFFICIAL_PLATFORMS and (
-            batch := component.store.claim(scope)
-        ) and component.store.waiting_for_qq_reply(batch):
-            reason = "QQ 官方暂不允许回复旧消息，积压已保留，等待对方发来新消息。"
-        elif not component.transport.can_deliver(component.platform_id, component.bot_id, component.user_id):
-            reason = "正在等私聊连接恢复。"
-        elif phone == "offline":
-            reason = "当前看不了手机，等可以看手机时处理。"
-        elif phone == "glance":
-            reason = "当前只能偶尔看手机，待回消息仍保留。"
-        elif phone is None:
-            reason = "正在等当前人设的日程可用。"
-        elif remaining:
-            reason = "刚空下来，稍后会检查待回消息。"
-        elif component.failed_attempts >= MAX_ATTEMPTS and (
-            batch := component.store.claim(scope)
-        ) and batch.revision == component.failed_batch:
-            reason = "补回暂未送出，收到新消息后会再尝试。"
-        else:
-            reason = "正在等当前聊天处理结束或下一次补回检查。"
-
-        today_sent = waiting = None
-        proactive_reason = None if component.proactive_settings.enabled else "主动消息已关闭。"
-        ledger = component.chat_ledger
-        if (
-            component.proactive_settings.enabled and ledger is not None
-            and ledger.data["bot_self_id"] == component.bot_id
-            and ledger.data["platform_name"] == component.platform_type
-        ):
-            now = scheduler.engine.now() if scheduler else datetime.now(timezone.utc)
-            today_sent = ledger.day(now.date().isoformat())["rounds"]
-            max_unanswered = component.proactive_settings.max_unanswered
-            if scheduler and day.get("date") == scheduler.engine.window()[0].date().isoformat():
-                max_unanswered = day.get("max_unanswered", max_unanswered)
-            waiting = ledger.data["unanswered"] >= max_unanswered
-            if ledger.data["hold"] == "user":
-                proactive_reason = "应用户要求，暂时不主动发消息。"
-            elif (
-                component.platform_type in QQ_OFFICIAL_PLATFORMS
-                and ledger.data.get("blocked_after_message") is not None
-                and ledger.data["blocked_after_message"] == ledger.data["message_version"]
-            ):
-                proactive_reason = "QQ 官方暂不允许发送，等待对方发来新消息后再考虑联系。"
-            elif waiting:
-                proactive_reason = "已到连续主动未回应上限，正在等对方回应。"
-            elif today_sent >= component.proactive_settings.daily_max:
-                proactive_reason = "今天的主动消息次数已用完。"
-            elif phone in {"offline", "glance"}:
-                proactive_reason = "等有空看手机时再考虑发主动消息。"
-            elif phone is None:
-                proactive_reason = "正在等当前人设的日程可用。"
+        events_for = getattr(scheduler, "user_events", None)
+        targets = []
+        for row in component.status():
+            if not component.settings.proactive_enabled:
+                reason = "主动消息已关闭。"
+            elif not row["platform_ready"]:
+                reason = "目标私聊的 QQ 平台暂未连接。"
+            elif not row["bound"]:
+                reason = "请在这条私聊里发一句普通消息，插件会自动识别机器人账号。"
+            elif row["stopped_for_unanswered"]:
+                reason = "已连续主动发了几次对方都没回，先停下来等对方。"
+            elif row["rounds_today"] >= component.settings.daily_max:
+                reason = "今天的主动消息次数已用完，明天再继续。"
+            elif row["hold_waiting"]:
+                reason = "对方说过忙完会来找你，暂时不主动打扰。"
+            elif row["hold_status"] in ("due", "ready", "retrying", "given_up"):
+                reason = _hold_reason(row, component.settings.hold_hours)
+            elif row["waiting_free"]:
+                reason = "到时间了，等角色空下来再发。"
+            elif row["next_due"]:
+                reason = "下一次想起对方的时间已经挑好。"
             else:
-                proactive_reason = "正在等待合适的主动聊天时机。"
+                reason = "等对方发来消息后开始计时。"
+            events = events_for(row["target"]) if callable(events_for) else []
+            targets.append(
+                {
+                    **row,
+                    "reason": reason,
+                    "events": [
+                        {key: item.get(key, "") for key in ("id", "content", "time", "follow_up_at", "status")}
+                        for item in events
+                    ],
+                }
+            )
+        return {**result, "status": "ready", "phone": phone, "targets": targets}
 
-        return {
-            **result, "status": "ready", "persona_id": persona_id, "pending_count": pending,
-            "uncertain_count": uncertain, "waiting_reason": reason, "phone": phone,
-            "reply_wait_seconds": remaining, "proactive_sent_today": today_sent,
-            "proactive_waiting_response": waiting,
-            "proactive_reason": proactive_reason,
-        }
-
-    async def chat_save(self):
-        return await self._respond(self._chat_save)
-
-    async def _chat_save(self):
+    async def _chat_body(self, limit=2048):
         if not _dashboard_admin(self.plugin.context):
-            raise DashboardError("请使用 AstrBot 面板管理员账号登录后再保存。", 403)
+            raise DashboardError("请使用 AstrBot 面板管理员账号登录后再修改。", 403)
         content_type = (request.content_type or "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
-            raise DashboardError("请通过私聊互动页面保存设置。", 415)
-        length = request.headers.get("content-length")
-        if length is not None and (not re.fullmatch(r"[0-9]{1,4}", length) or int(length) > 1024):
-            raise DashboardError("设置内容过长，请重新填写。", 413)
+            raise DashboardError("请通过私聊互动页面操作。", 415)
         body = await request.body()
-        if len(body) > 1024:
-            raise DashboardError("设置内容过长，请重新填写。", 413)
+        if len(body) > limit:
+            raise DashboardError("请求内容过长。", 413)
         try:
             payload = json.loads(body)
         except (ValueError, RecursionError):
-            raise DashboardError("请通过私聊互动页面保存设置。") from None
-        _save_chat_settings(self.plugin, payload)
-        return {"status": "ok", "settings": payload}
+            raise DashboardError("请通过私聊互动页面操作。") from None
+        if not isinstance(payload, dict) or not isinstance(payload.get("target"), str):
+            raise DashboardError("请选择一条目标私聊。")
+        return payload
+
+    async def chat_event_delete(self):
+        return await self._respond(self._chat_event_delete)
+
+    async def _chat_event_delete(self):
+        payload = await self._chat_body()
+        event_id = payload.get("id")
+        scheduler = self.plugin.components.get(SCHEDULE_ID)
+        delete = getattr(scheduler, "delete_user_event", None)
+        if not isinstance(event_id, str) or not callable(delete):
+            raise DashboardError("这条记录暂时无法删除。", 409)
+        if not await delete(payload["target"], event_id):
+            raise DashboardError("没有找到这条记录，请刷新后再试。", 404)
+        return {"status": "ok"}
+
+    async def chat_binding_reset(self):
+        return await self._respond(self._chat_binding_reset)
+
+    async def _chat_binding_reset(self):
+        payload = await self._chat_body()
+        component = self.plugin.components.get(CHAT_ID)
+        if component is None or not await component.reset_binding(payload["target"]):
+            raise DashboardError("没有找到这条目标私聊。", 404)
+        return {"status": "ok"}
 
     async def photos(self):
         return await self._respond(self._photos)
@@ -531,8 +507,10 @@ class NaturalLifeDashboard:
         except (ValueError, RecursionError):
             raise DashboardError("请选择一个列表中的音色。") from None
         if (
-            not isinstance(payload, dict) or payload.keys() != {"voice_id"}
-            or not isinstance(payload["voice_id"], str) or not payload["voice_id"]
+            not isinstance(payload, dict)
+            or payload.keys() != {"voice_id"}
+            or not isinstance(payload["voice_id"], str)
+            or not payload["voice_id"]
         ):
             raise DashboardError("请选择一个列表中的音色。")
         voice = self.plugin.components.get(VOICE_ID)
@@ -544,4 +522,3 @@ class NaturalLifeDashboard:
 
     async def _qzone(self):
         return await qzone_status(self.plugin, self.plugin.components.get(QZONE_ID))
-

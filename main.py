@@ -14,21 +14,21 @@ from astrbot.core import sp
 from astrbot.core.provider.register import llm_tools
 from astrbot.core.star.filter.command import GreedyStr
 from astrbot.core.star.filter.custom_filter import CustomFilter
-from astrbot.core.star.star import star_map
 
-from .components.chat.main import AlreadyAwakePrivate, LifeBusy
+from .components.chat.main import AlreadyAwakePrivate, LifeChat
 from .components.photo.main import LifePhotoPlugin, configure_photo_tool_schema
 from .components.qzone.main import QzoneLifePlugin
 from .components.schedule.main import LifeSchedulerPlus
 from .components.voice.main import LifeVoicePlugin
 from .config import ComponentConfig
 from .dashboard import NaturalLifeDashboard
+from .migrate import migrate_config
 from .runtime import (
     CHAT_ID,
     LEGACY_IDS,
     PHOTO_ID,
-    QQ_PLATFORM,
     QQ_OFFICIAL_PLATFORMS,
+    QQ_PLATFORM,
     QZONE_ID,
     ROOT_PLUGIN_ID,
     SCHEDULE_ID,
@@ -43,7 +43,7 @@ COMPONENT_TYPES = {
     SCHEDULE_ID: LifeSchedulerPlus,
     PHOTO_ID: LifePhotoPlugin,
     VOICE_ID: LifeVoicePlugin,
-    CHAT_ID: LifeBusy,
+    CHAT_ID: LifeChat,
     QZONE_ID: QzoneLifePlugin,
 }
 SCHEDULE_TOOLS = {
@@ -104,22 +104,11 @@ def life_tool(name):
     return stage
 
 
-class BoundPrivate(CustomFilter):
-    def filter(self, event, cfg):
-        if not is_qq_event(event):
-            return False
-        meta = star_map.get(__name__)
-        if meta and meta.star_cls:
-            chat = meta.star_cls.components.get(CHAT_ID)
-            return chat is not None and chat._matches_event(event)
-        return False
-
-
 @register(
     ROOT_PLUGIN_ID,
     "臭屁",
-    "日程驱动的 QQ 拟人陪伴：忙闲回复、主动聊天、语音、自拍和 QQ 空间。网页聊天支持语音。",
-    "v1.3.11",
+    "日程驱动的 QQ 拟人陪伴：主动聊天、语音、自拍和 QQ 空间。网页聊天支持语音。",
+    "v1.4.4",
 )
 class NaturalLife(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -138,8 +127,10 @@ class NaturalLife(Star):
         self._dashboard = NaturalLifeDashboard(self)
 
     async def initialize(self):
-        chat = ComponentConfig(self.config, "chat", self._config_write_lock)
-        chat.ensure_saved_value("proactive_prompt", chat.schema["proactive_prompt"]["default"])
+        try:
+            migrate_config(self.config, self._config_write_lock)
+        except Exception as error:
+            logger.error("[拟人生活] 旧配置迁移失败，本次按现有配置运行（%s: %s）。", type(error).__name__, error)
         await self._sync_components()
         self._dashboard.register()
 
@@ -186,9 +177,10 @@ class NaturalLife(Star):
                     except Exception as error:
                         self.failed_components[plugin_id] = type(error).__name__
                         logger.error(
-                            "[拟人生活] %s 初始化失败（%s）。",
+                            "[拟人生活] %s 初始化失败（%s：%s）。",
                             SECTIONS[plugin_id],
                             type(error).__name__,
+                            error,
                         )
                         await self._stop_component(plugin_id)
                 self._running = True
@@ -256,8 +248,7 @@ class NaturalLife(Star):
         if plugin_id == QZONE_ID and event.get_platform_name() != QQ_PLATFORM:
             return None
         if self._closed or not (
-            is_qq_event(event)
-            or (plugin_id == VOICE_ID and event.get_platform_name() == "webchat")
+            is_qq_event(event) or (plugin_id == VOICE_ID and event.get_platform_name() == "webchat")
         ):
             return None
         if legacy_conflicts(self.context):
@@ -280,14 +271,10 @@ class NaturalLife(Star):
         return None
 
     @filter.on_llm_request()
-    async def component_requests(
-        self, event: AstrMessageEvent, request: ProviderRequest
-    ):
+    async def component_requests(self, event: AstrMessageEvent, request: ProviderRequest):
         if not is_qq_event(event):
             unavailable_tools = set(self._published_tools)
-            if VOICE_TOOL in unavailable_tools and (
-                voice := await self._component_for(VOICE_ID, event)
-            ):
+            if VOICE_TOOL in unavailable_tools and (voice := await self._component_for(VOICE_ID, event)):
                 await voice.on_llm_request(event, request)
                 if event.is_stopped():
                     return
@@ -318,9 +305,7 @@ class NaturalLife(Star):
                 request.func_tool.remove_tool(name)
 
     @filter.on_llm_response()
-    async def schedule_on_llm_response(
-        self, event: AstrMessageEvent, resp: LLMResponse
-    ):
+    async def schedule_on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
         if component := await self._component_for(SCHEDULE_ID, event):
             await component.on_llm_response(event, resp)
 
@@ -330,9 +315,7 @@ class NaturalLife(Star):
             await component.after_message_sent(event)
 
     @filter.on_llm_tool_respond()
-    async def schedule_on_llm_tool_respond(
-        self, event: AstrMessageEvent, tool, tool_args, tool_result
-    ):
+    async def schedule_on_llm_tool_respond(self, event: AstrMessageEvent, tool, tool_args, tool_result):
         """Consume event-local success receipts; tool arguments prove no delivery."""
         if component := await self._component_for(SCHEDULE_ID, event):
             await component.on_llm_tool_respond(event, tool, tool_args, tool_result)
@@ -402,9 +385,7 @@ class NaturalLife(Star):
                     yield result
 
     @qq_command("取消约定")
-    async def life_promise_cancel(
-        self, event: AstrMessageEvent, extra: GreedyStr = GreedyStr
-    ):
+    async def life_promise_cancel(self, event: AstrMessageEvent, extra: GreedyStr = GreedyStr):
         if component := await self._component_for(SCHEDULE_ID, event):
             async with aclosing(component.life_promise_cancel(event, extra)) as results:
                 async for result in results:
@@ -418,9 +399,7 @@ class NaturalLife(Star):
                     yield result
 
     @qq_command("展示")
-    async def wardrobe_show_image(
-        self, event: AstrMessageEvent, extra: GreedyStr = GreedyStr
-    ):
+    async def wardrobe_show_image(self, event: AstrMessageEvent, extra: GreedyStr = GreedyStr):
         if component := await self._component_for(SCHEDULE_ID, event):
             async with aclosing(component.wardrobe_show_image(event, extra)) as results:
                 async for result in results:
@@ -434,9 +413,7 @@ class NaturalLife(Star):
                     yield result
 
     @qq_command("参考会话")
-    async def life_reference_umo(
-        self, event: AstrMessageEvent, extra: GreedyStr = GreedyStr
-    ):
+    async def life_reference_umo(self, event: AstrMessageEvent, extra: GreedyStr = GreedyStr):
         if component := await self._component_for(SCHEDULE_ID, event):
             async with aclosing(component.life_reference_umo(event, extra)) as results:
                 async for result in results:
@@ -467,9 +444,7 @@ class NaturalLife(Star):
         return "当前会话未启用这项功能。"
 
     @life_tool("life_wardrobe_edit")
-    async def llm_wardrobe_edit(
-        self, event: AstrMessageEvent, query: str, instruction: str
-    ) -> str:
+    async def llm_wardrobe_edit(self, event: AstrMessageEvent, query: str, instruction: str) -> str:
         """按主人明确要求修改穿搭，保留其余造型细节。
 
         Args:
@@ -498,9 +473,7 @@ class NaturalLife(Star):
             await component.capture_photo_turn(event, run_context)
 
     @filter.on_agent_done()
-    async def photo_clean_photo_agent_done(
-        self, event: AstrMessageEvent, run_context, response
-    ):
+    async def photo_clean_photo_agent_done(self, event: AstrMessageEvent, run_context, response):
         if component := await self._component_for(PHOTO_ID, event):
             await component.clean_photo_agent_done(event, run_context, response)
 
@@ -536,7 +509,7 @@ class NaturalLife(Star):
         角色与指定人物合影时 with_user_image=true，优先使用本条新发的人物素材，没有再用本条引用。
         素材可以是真人或虚构人物。用户明确指定紧邻上一条上传的人物素材时也用此选项。
         缺素材时请对方重新发或引用人物图片。
-        新拍、续拍或改图时在waiting_text写一条符合人设的单行短话，例如“等着。这就拍给你看。”
+        新拍、续拍或改图时在waiting_text写一条符合人设的简短过渡话。
         插件会先发这句再开始生成；不要另发同一句，不写旁白、声音标签或拍摄细节。
         原图重发时留空。完成后自然接话，不重复说已经发了，不重复调用或自行重试。
 
@@ -545,7 +518,7 @@ class NaturalLife(Star):
             photo_type(string): selfie自拍、scene场景、food食物、outfit穿搭。
             count(number): 一到四张，默认一张。
             with_user_image(boolean): 是否让角色与本条上传或引用的人物素材合影，支持虚构人物。
-            aspect_ratio(string): 仅在用户明确指定比例或横图、正方形等构图时填写；所有新图留空默认3:4。
+            aspect_ratio(string): 仅在用户明确指定比例或横图、正方形等构图时填写；其余留空，按插件的照片尺寸设置。
             mode(string): photo生活照、text普通文字生图、edit修改消息图片。
             action(string): generate新拍，continue承接来源再拍，resend复用一张已成功照片且不调用生图服务。
             source_photo_id(string): 本会话本角色的来源照片ID。指定组内某张时按组标签与序号选对应ID，即使本轮也有新附件。
@@ -574,9 +547,7 @@ class NaturalLife(Star):
             await component.acknowledge_waiting_reply(event)
 
     @filter.on_llm_tool_respond()
-    async def photo_acknowledge_voice_reply(
-        self, event: AstrMessageEvent, tool, arguments, result
-    ):
+    async def photo_acknowledge_voice_reply(self, event: AstrMessageEvent, tool, arguments, result):
         if component := await self._component_for(PHOTO_ID, event):
             await component.acknowledge_voice_reply(event, tool, arguments, result)
 
@@ -589,17 +560,13 @@ class NaturalLife(Star):
 
     @life_tool("tts_speak")
     async def tts_speak(self, event: AstrMessageEvent, text: str):
-        """给当前私聊发送一条完整的自然语音。
+        """给当前私聊发送一条完整的语音。
 
-        【单轮媒介二选一死令】：每一轮回复必须在“只发普通文字”与“只调用本工具发语音”之间严格二选一！一旦决定调用 tts_speak，模型主回复的普通文字正文（content）必须完全留空（0字），严禁在调用语音工具的同时输出任何普通文字预告或同文“字幕”。
-        【日程场景联动】：结合 <character_life> 的当前活动与地点判断——手头沾东西/做饭/画画/运动后/走路/刚睡醒赖床等腾不出手或慵懒时刻优先发语音，并可在台词中自然带出当下动作；若身处会议、展览、拍卖、公共安静场所或身边有外人/下属在场，优先用文字，若对方坚持要听语音则必须配合 [耳语] 标签压低声音简短说一句并点明环境。
-        【语音专属口语长句规范】：语音台词与手指打字的短句格式完全不同！text 必须像真人贴在麦克风边随口说出来的一整句连贯口语，句内必须正常使用逗号（，）控制自然换气与呼吸停顿，切勿用大量句号把话切碎。
-        可选用最多两个声音标签，仅写在 text 参数中：
-        可用：[笑] [轻笑] [咯咯笑] [哭声] [抽泣] [呜咽] [呻吟] [哀号]
-        [叹气] [惊呼] [吸气] [呼气] [喘息] [耳语] [喊叫] [惨叫] [唱歌]
-        [哼歌] [结巴] [停顿] [清嗓] [咳嗽] [吸鼻子] [咂嘴] [啧嘴]
-        [打哈欠] [打喷嚏] [打嗝] [打饱嗝] [吞咽] [干呕] [闷哼] [冷笑] [哼鼻子]。
-        语音合成失败时自动改发正文。
+        每轮只选一种：要么只发普通文字，要么只调用本工具发语音。调用时主回复的普通文字留空，不另写同样内容的文字或预告。
+        看 <character_life> 里你正在做什么：手上占着、在路上、刚睡醒，或者这句话用嘴说更自然时适合发语音，台词里可以顺口带出手边的事；在需要安静的地方优先打字，对方坚持想听时，用 [耳语] 压低声音简短说一句。
+        台词是你随口说出来的一段连贯口语，句内正常用逗号（，）换气停顿，不要用一串句号把话切碎。
+        最多用两个声音标签，只写在 text 参数里。日常常用：[笑] [轻笑] [咯咯笑] [叹气] [耳语] [停顿] [清嗓] [吸气] [呼气] [吸鼻子] [打哈欠] [哼歌] [惊呼] [哼鼻子] [啧嘴]；情绪真的很重时才用 [抽泣] [哭声]。
+        语音合成失败时会自动改发正文。
 
         Args:
             text(string): 一条语音要说的完整连贯口语台词（句内用逗号自然换气），可含声音标签，最多1000字。
@@ -637,38 +604,15 @@ class NaturalLife(Star):
         if component := await self._component_for(CHAT_ID, event):
             await component.on_private(event)
 
-    @filter.custom_filter(BoundPrivate, False)
-    @qq_command("busy_status")
-    async def busy_status(self, event: AstrMessageEvent):
-        if component := await self._component_for(CHAT_ID, event):
-            async with aclosing(component.busy_status(event)) as results:
-                async for result in results:
-                    yield result
-
-    @filter.on_llm_request(priority=1000)
-    async def chat_check_request(self, event: AstrMessageEvent, request):
-        if component := await self._component_for(CHAT_ID, event):
-            await component.check_request(event, request)
-
     @filter.on_llm_request(priority=-1000)
-    async def chat_guide_replay(self, event: AstrMessageEvent, request):
+    async def chat_guide_reply(self, event: AstrMessageEvent, request):
         if component := await self._component_for(CHAT_ID, event):
-            await component.guide_replay(event, request)
+            await component.guide_reply(event, request)
 
-    @filter.on_using_llm_tool(priority=1000)
-    async def check_tool(self, event: AstrMessageEvent, tool, tool_args):
+    @filter.on_decorating_result()
+    async def chat_clean_reply_markers(self, event: AstrMessageEvent):
         if component := await self._component_for(CHAT_ID, event):
-            return await component.check_tool(event, tool, tool_args)
-
-    @filter.on_llm_response(priority=1000)
-    async def chat_check_response(self, event: AstrMessageEvent, response):
-        if component := await self._component_for(CHAT_ID, event):
-            await component.check_response(event, response)
-
-    @filter.on_decorating_result(priority=1000)
-    async def chat_check_result(self, event: AstrMessageEvent):
-        if component := await self._component_for(CHAT_ID, event):
-            await component.check_result(event)
+            await component.clean_reply_markers(event)
 
     @filter.after_message_sent(priority=1000)
     async def chat_observe_normal_reply(self, event: AstrMessageEvent):
@@ -676,9 +620,7 @@ class NaturalLife(Star):
             await component.observe_normal_reply(event)
 
     @life_tool("qzone_publish_photo")
-    async def qzone_publish_photo(
-        self, event: AstrMessageEvent, caption: str = ""
-    ) -> str:
+    async def qzone_publish_photo(self, event: AstrMessageEvent, caption: str = "") -> str:
         """用户明确要求把引用或当前消息的照片发到你的QQ空间时使用。仅看图聊天不调用。未明确指定发布文案时caption留空，插件按照片和当前人设自动配文。结果按facts用角色口吻回复，勿显示内部引用。结果不明先查询，勿再次调用发布。
 
         Args:

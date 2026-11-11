@@ -1,7 +1,7 @@
 """Manually curated camera and pose notes, independent of sample photos."""
 
-from dataclasses import asdict, dataclass
 import json
+from dataclasses import asdict, dataclass
 from typing import Literal
 
 from .planner import ShotSpec
@@ -28,14 +28,8 @@ def pose_examples_prompt(state: dict, user_text: str) -> str:
         return ""
 
     slot = state.get("current_slot", {})
-    context = (
-        f"{slot.get('location', '')} {slot.get('activity', '')} {user_text}".casefold()
-    )
-    matching = [
-        item
-        for item in POSE_EXAMPLES
-        if any(term.casefold() in context for term in item.when_any)
-    ]
+    context = f"{slot.get('location', '')} {slot.get('activity', '')} {user_text}".casefold()
+    matching = [item for item in POSE_EXAMPLES if any(term.casefold() in context for term in item.when_any)]
     general = [item for item in POSE_EXAMPLES if not item.when_any]
     candidates = (matching + general)[:3]
     if not candidates:

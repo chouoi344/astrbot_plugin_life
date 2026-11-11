@@ -38,11 +38,31 @@ def is_transient_error(exc):
         if is_timeout(exc) or isinstance(exc, ConnectionError):
             return True
         if isinstance(exc, OSError) and getattr(exc, "errno", None) in {
-            errno.ECONNRESET, errno.ECONNREFUSED, errno.ENETUNREACH,
-            errno.EHOSTUNREACH, errno.ETIMEDOUT, errno.EPIPE,
+            errno.ECONNRESET,
+            errno.ECONNREFUSED,
+            errno.ENETUNREACH,
+            errno.EHOSTUNREACH,
+            errno.ETIMEDOUT,
+            errno.EPIPE,
         }:
             return True
-        if any(word in text for word in ("connectionerror", "connecterror", "networkerror", "readerror", "connection error", "connection reset", "connection refused", "temporary failure", "temporarily unavailable", "连接错误", "连接失败", "连接不上")):
+        if any(
+            word in text
+            for word in (
+                "connectionerror",
+                "connecterror",
+                "networkerror",
+                "readerror",
+                "connection error",
+                "connection reset",
+                "connection refused",
+                "temporary failure",
+                "temporarily unavailable",
+                "连接错误",
+                "连接失败",
+                "连接不上",
+            )
+        ):
             return True
         exc = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
     return False
@@ -75,14 +95,23 @@ def user_error(error, *, action=None):
     diagnostic = type(error).__name__ + " " + text
     lower = diagnostic.lower()
     safe_prefixes = (
-        "用法：", "没有找到这套穿搭", "没有找到对应穿搭", "多套穿搭包含这个描述",
-        "请在指令里附上图片", "没有找到这个约定编号", "没有找到这个事件编号",
-        "穿搭描述为空", "日程时间请使用", "事件结束日期早于开始日期",
+        "用法：",
+        "没有找到这套穿搭",
+        "没有找到对应穿搭",
+        "多套穿搭包含这个描述",
+        "请在指令里附上图片",
+        "没有找到这个约定编号",
+        "没有找到这个事件编号",
+        "穿搭描述为空",
+        "日程时间请使用",
+        "事件结束日期早于开始日期",
     )
     if text.startswith(safe_prefixes) and not re.search(r"Error|Exception|HTTP|Traceback|https?://", text):
         return text
     if isinstance(error, OperationTimeout):
-        return f"{error.operation}超过 {error.seconds:g} 秒还没完成，请稍后重试；如果连续失败，请检查 AstrBot 的模型设置。"
+        return (
+            f"{error.operation}超过 {error.seconds:g} 秒还没完成，请稍后重试；如果连续失败，请检查 AstrBot 的模型设置。"
+        )
     if is_timeout(error) or "timeout" in lower or "超时" in text:
         seconds = re.search(r"[（(](\d+(?:\.\d+)?)\s*秒[）)]", text)
         duration = "超过 " + seconds.group(1) + " 秒还没完成" if seconds else "等待时间较长"
@@ -91,7 +120,26 @@ def user_error(error, *, action=None):
         return "生成的内容里有和你通话、视频或见面等安排，请点重新生成，其他生活内容会正常保留。"
     if "人设" in text and any(word in text for word in ("找不到", "不存在", "读取")):
         return "人设读取没有完成，请在 AstrBot 人格设定里确认名称后重试。"
-    if any(word in lower for word in ("noprovider", "connection", "connecterror", "network", "provider", "api key", "api_key", "unauthor", "401", "403", "429", "500", "502", "503", "504")) or any(word in text for word in ("没有可用的模型", "模型连接", "连接不上")):
+    if any(
+        word in lower
+        for word in (
+            "noprovider",
+            "connection",
+            "connecterror",
+            "network",
+            "provider",
+            "api key",
+            "api_key",
+            "unauthor",
+            "401",
+            "403",
+            "429",
+            "500",
+            "502",
+            "503",
+            "504",
+        )
+    ) or any(word in text for word in ("没有可用的模型", "模型连接", "连接不上")):
         return "模型连接不上，请检查 AstrBot 的模型设置后点重试。"
     if "json" in lower or any(word in text for word in ("档案内容为空", "时间段", "时间轴", "临时搭配", "概况")):
         return "模型这次没有整理好内容，请点重试；如果连续失败，请换一个模型再试。"

@@ -39,7 +39,7 @@ class JsonStore:
             if default is not None and not isinstance(value, type(default)):
                 raise ValueError("Unexpected JSON root type")
         except (json.JSONDecodeError, UnicodeError, ValueError) as exc:
-            logger.error("日程数据文件损坏，保留原文件：%s (%s)", path, describe_error(exc))
+            logger.error("[生活日程] 日程数据文件损坏，保留原文件：%s (%s)", path, describe_error(exc))
             broken = path.with_name(path.name + ".broken")
             suffix = 1
             while broken.exists():

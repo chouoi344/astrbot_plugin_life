@@ -11,8 +11,7 @@ def schedule_hash(life: dict) -> str:
     contents = {key: life.get(key) for key in ("outfit", "schedule", "meta", "timeline")}
     if isinstance(contents["meta"], dict):
         contents["meta"] = {
-            key: value for key, value in contents["meta"].items()
-            if key != "qzone_generation_in_progress"
+            key: value for key, value in contents["meta"].items() if key != "qzone_generation_in_progress"
         }
     raw = json.dumps(
         contents,
@@ -58,7 +57,8 @@ def parse_schedule(text: str) -> list[dict]:
                 # "晚上11点到次日8点" ends at 08:00, not 20:00.
                 end_prefix = period or ("" if next_day else prefix)
                 if (
-                    not period and not next_day
+                    not period
+                    and not next_day
                     and any(x in prefix for x in ("晚上", "傍晚"))
                     and int(end_match[1]) < int(match[1])
                 ):
@@ -129,22 +129,31 @@ def _dated_intervals(activities, earliest, limit, *, retain_free=False):
         if start < end:
             rows.append((start, end, slot))
     rows.sort(key=lambda row: (row[0], row[1], row[2]["activity"]))
-    quiet = [(start, end) for start, end, slot in rows
-             if slot.get("rest_type", "none") != "none" or not _shareable(slot["activity"])]
-    unavailable = [(start, end) for start, end, slot in rows
-                   if slot.get("rest_type", "none") != "none" or not slot["activity"].strip()]
+    quiet = [
+        (start, end)
+        for start, end, slot in rows
+        if slot.get("rest_type", "none") != "none" or not _shareable(slot["activity"])
+    ]
+    unavailable = [
+        (start, end)
+        for start, end, slot in rows
+        if slot.get("rest_type", "none") != "none" or not slot["activity"].strip()
+    ]
     result = []
     for start, end, slot in rows:
         shareable = not any(start < stop and end > begin for begin, stop in quiet)
-        free = (
-            slot.get("phone") == "free"
-            and not any(start < stop and end > begin for begin, stop in unavailable)
-        )
+        free = slot.get("phone") == "free" and not any(start < stop and end > begin for begin, stop in unavailable)
         if shareable or (retain_free and free):
-            result.append({
-                "start": start, "end": end, "activity": slot["activity"], "source": slot,
-                "shareable": shareable, "free": free,
-            })
+            result.append(
+                {
+                    "start": start,
+                    "end": end,
+                    "activity": slot["activity"],
+                    "source": slot,
+                    "shareable": shareable,
+                    "free": free,
+                }
+            )
     return result
 
 
@@ -164,8 +173,12 @@ def normalize_intervals(activities, now: datetime, *, valid_until=None, recent_e
             return []
     if limit <= midnight:
         return []
-    if (isinstance(activities, (list, tuple)) and activities
-            and isinstance(activities[0], dict) and "start" in activities[0]):
+    if (
+        isinstance(activities, (list, tuple))
+        and activities
+        and isinstance(activities[0], dict)
+        and "start" in activities[0]
+    ):
         earliest = midnight - timedelta(minutes=15) if recent_endings else midnight
         return _dated_intervals(activities, earliest, limit, retain_free=recent_endings)
     rows = []
@@ -185,9 +198,7 @@ def normalize_intervals(activities, now: datetime, *, valid_until=None, recent_e
             end, activity = None, ""
         rows.append((start, end, activity))
     starts = sorted({row[0] for row in rows})
-    boundaries = sorted(
-        midnight + timedelta(days=day, minutes=start) for day in (-1, 0, 1) for start in starts
-    )
+    boundaries = sorted(midnight + timedelta(days=day, minutes=start) for day in (-1, 0, 1) for start in starts)
 
     def raw_bounds(start, end, offset):
         at = midnight + timedelta(days=offset, minutes=start)
@@ -297,10 +308,7 @@ def select_slots(
     for at, interval, deadline, kind in candidates:
         if kind == "mood" and mood_chosen:
             continue
-        if all(
-            at != old[0] and abs((at - old[0]).total_seconds()) >= settings.min_gap_minutes * 60
-            for old in chosen
-        ):
+        if all(at != old[0] and abs((at - old[0]).total_seconds()) >= settings.min_gap_minutes * 60 for old in chosen):
             chosen.append((at, interval, deadline, kind))
             mood_chosen |= kind == "mood"
             if len(chosen) >= target:
@@ -346,7 +354,8 @@ def plan_matches_schedule(plan, activities, now: datetime, *, valid_until=None) 
         trigger = plan.get("trigger", "activity")
         for kind, interval, low, high in _opportunity_windows(activities, now, valid_until):
             if (
-                kind == trigger and str(plan.get("activity", "")) == interval["activity"]
+                kind == trigger
+                and str(plan.get("activity", "")) == interval["activity"]
                 and low.timestamp() <= slot <= current < high.timestamp()
                 and expiry <= high.timestamp()
                 and (kind != "after_activity" or plan["activity_end"] == interval["end"].timestamp())

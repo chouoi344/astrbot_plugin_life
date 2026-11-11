@@ -6,8 +6,14 @@ import unicodedata
 from datetime import date, timedelta
 
 OUTFIT_CATEGORIES = {"outdoor": "外出", "home": "居家", "sleepwear": "睡衣"}
-OUTFIT_PARTS = (("overall_style", "整体风格"), ("clothing", "服装"), ("footwear", "鞋袜"),
-                ("accessories", "配饰"), ("hair", "发型"), ("makeup", "妆容"))
+OUTFIT_PARTS = (
+    ("overall_style", "整体风格"),
+    ("clothing", "服装"),
+    ("footwear", "鞋袜"),
+    ("accessories", "配饰"),
+    ("hair", "发型"),
+    ("makeup", "妆容"),
+)
 _EXTRA_PARTS = (("details", "颜色材质与版型"), ("constraints", "穿戴约束"))
 
 
@@ -26,8 +32,11 @@ def format_outfit_description(value):
     parts = value.get("parts", value)
     if not isinstance(parts, dict):
         return ""
-    return "；".join(label + "：" + text for key, label in OUTFIT_PARTS + _EXTRA_PARTS
-                    if isinstance(parts.get(key), str) and (text := parts[key].strip()))
+    return "；".join(
+        label + "：" + text
+        for key, label in OUTFIT_PARTS + _EXTRA_PARTS
+        if isinstance(parts.get(key), str) and (text := parts[key].strip())
+    )
 
 
 def description_key(value):
@@ -40,9 +49,12 @@ def description_key(value):
 def normalize_outfit(value, kind):
     raw = copy.deepcopy(value) if isinstance(value, dict) else {}
     identifier = str(raw.get("id", "") or "")
-    raw.update(id=identifier, description=format_outfit_description(value),
-               temporary=bool(raw.get("temporary", not identifier)) or not identifier,
-               category=raw.get("category") or OUTFIT_CATEGORIES.get(kind, "运动"))
+    raw.update(
+        id=identifier,
+        description=format_outfit_description(value),
+        temporary=bool(raw.get("temporary", not identifier)) or not identifier,
+        category=raw.get("category") or OUTFIT_CATEGORIES.get(kind, "运动"),
+    )
     return raw
 
 
@@ -73,8 +85,11 @@ def _keys(day):
 def project_day_outfits(day, entries, image_store=None):
     """Return display rows without mutating configuration or stored day data."""
     day = day if isinstance(day, dict) else {}
-    indexed = {str(entry.get("id")): (number, entry) for number, entry in enumerate(entries or [], 1)
-               if isinstance(entry, dict) and entry.get("id")}
+    indexed = {
+        str(entry.get("id")): (number, entry)
+        for number, entry in enumerate(entries or [], 1)
+        if isinstance(entry, dict) and entry.get("id")
+    }
     result = []
     for key in _keys(day):
         kind = "sports" if key.startswith("sports:") else key
@@ -94,12 +109,26 @@ def project_day_outfits(day, entries, image_store=None):
                 path = path_for(outfit["id"])
                 if path.is_file():
                     image_path = str(path.resolve())
-        result.append({"key": key, "kind": kind, "label": OUTFIT_CATEGORIES.get(kind, "运动"),
-                       "category": (entry or outfit).get("category") or OUTFIT_CATEGORIES.get(kind, "运动"),
-                       "id": outfit["id"], "description": description, "temporary": temporary,
-                       "source": source, "source_label": "衣柜·穿搭" + str(number) if source == "wardrobe" else "已从衣柜删除" if source == "deleted" else "AI 临时搭配",
-                       "wardrobe_number": number, "image_path": image_path,
-                       "can_collect": source == "temporary" and bool(description)})
+        result.append(
+            {
+                "key": key,
+                "kind": kind,
+                "label": OUTFIT_CATEGORIES.get(kind, "运动"),
+                "category": (entry or outfit).get("category") or OUTFIT_CATEGORIES.get(kind, "运动"),
+                "id": outfit["id"],
+                "description": description,
+                "temporary": temporary,
+                "source": source,
+                "source_label": "衣柜·穿搭" + str(number)
+                if source == "wardrobe"
+                else "已从衣柜删除"
+                if source == "deleted"
+                else "AI 临时搭配",
+                "wardrobe_number": number,
+                "image_path": image_path,
+                "can_collect": source == "temporary" and bool(description),
+            }
+        )
     return result
 
 
@@ -182,6 +211,13 @@ def recent_actual_outfits(history, today, no_repeat_days):
             if signature in seen or not (description or identifier):
                 continue
             seen.add(signature)
-            result.append({"date": record["date"], "key": key, "id": identifier, "description": description,
-                           "temporary": not bool(identifier) or raw["temporary"]})
+            result.append(
+                {
+                    "date": record["date"],
+                    "key": key,
+                    "id": identifier,
+                    "description": description,
+                    "temporary": not bool(identifier) or raw["temporary"],
+                }
+            )
     return result

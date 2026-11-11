@@ -6,9 +6,8 @@ from datetime import date
 
 from astrbot.api import logger
 
-from .wardrobe import season_for_day
-
 from .errors import describe_error
+from .wardrobe import season_for_day
 
 _warned_days = set()
 
@@ -31,7 +30,11 @@ def get_calendar_info(day: date) -> dict:
         result["holiday"] = holiday or ""
     except (ImportError, ValueError, NotImplementedError) as exc:
         if day not in _warned_days:
-            logger.warning("%s 的节假日数据不可用，按工作日和周末判断；可升级 chinesecalendar：%s", day, describe_error(exc))
+            logger.warning(
+                "[生活日程] %s 的节假日数据不可用，按工作日和周末判断；可升级 chinesecalendar：%s",
+                day,
+                describe_error(exc),
+            )
             _warned_days.add(day)
     try:
         from lunar_python import Solar

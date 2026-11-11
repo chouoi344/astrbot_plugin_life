@@ -6,9 +6,8 @@ import hashlib
 import uuid
 from pathlib import Path
 
-from PIL import Image
-
 from astrbot.api import logger as log
+from PIL import Image
 
 from .errors import describe_error, run_with_timeout, user_error
 from .storage import JsonStore
@@ -28,8 +27,14 @@ class WardrobeUploadProcessor:
         self.config_lock = asyncio.Lock()
 
     def _unchanged(self, original, current, references):
-        return bool(current) and self._uploads(current) == references and all(
-            current.get(key) == original.get(key) for key in ("description", "category", "seasons", "image_processed_hash"))
+        return (
+            bool(current)
+            and self._uploads(current) == references
+            and all(
+                current.get(key) == original.get(key)
+                for key in ("description", "category", "seasons", "image_processed_hash")
+            )
+        )
 
     async def _restore_image(self, entry_id, payload):
         worker = asyncio.create_task(asyncio.to_thread(self.images.restore, entry_id, payload))
@@ -128,7 +133,9 @@ class WardrobeUploadProcessor:
                         self._status(entry["id"], "ok", "图片穿搭已提取")
                         continue
                     self._status(entry["id"], "processing", "正在提取穿搭…")
-                    normalized = await self.llm.describe_outfit(paths, "仅整理这套图片中的穿戴信息，自动判断分类和适用季节。")
+                    normalized = await self.llm.describe_outfit(
+                        paths, "仅整理这套图片中的穿戴信息，自动判断分类和适用季节。"
+                    )
                     current = next((item for item in self.wardrobe.all() if item["id"] == entry["id"]), None)
                     if not self._unchanged(entry, current, references):
                         self._status(entry["id"], "failed", "已保留刚刚修改的穿搭，请重新上传后保存配置再识别。")

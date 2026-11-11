@@ -30,7 +30,7 @@ const VIEWS = {
   schedule: ["今日日程", "从清晨到夜晚，日子正在慢慢发生。"],
   wardrobe: ["我的衣柜", "为不同日子，留一套喜欢的搭配。"],
   profile: ["生活档案", "让熟悉的习惯，成为生活的底色。"],
-  chat: ["私聊互动", "查看待回消息和主动互动，也可以调整回复节奏。"],
+  chat: ["私聊互动", "查看每条私聊的主动互动，以及记下的对方的事。"],
   photos: ["照片", "回看最近的成片，了解它们有没有发出去。"],
   references: ["照片", "查看、上传、替换和删除面部与身材参考图。"],
   voice: ["语音", "查看语音准备情况，选择日常说话的音色。"],
@@ -40,17 +40,13 @@ const VIEWS = {
 const DASHBOARD_VIEWS = new Set(["overview", "chat", "photos", "voice", "qzone"]);
 const DASHBOARD_STATUS = {
   overview: { disabled: "日程功能已关闭。", unavailable: "暂时没有可显示的日程片段。", unbound: "还没有可用的全局默认人设。" },
-  chat: { disabled: "私聊互动已关闭。", unavailable: "暂时读不到私聊互动状态。", unbound: "还没有绑定私聊会话。" },
+  chat: { disabled: "私聊互动已关闭。", unavailable: "暂时读不到私聊互动状态。", unbound: "还没有填写目标私聊。" },
   photos: { disabled: "照片功能已关闭。", unavailable: "暂时读不到最近成片。", unbound: "还没有可用的当前人设或会话。" },
   voice: { disabled: "语音功能已关闭。", unavailable: "暂时读不到语音配置。", unbound: "还没有可用的语音配置。" },
   qzone: { disabled: "QQ 空间功能已关闭。", unavailable: "暂时读不到 QQ 空间记录。", unbound: "还没有可用的 QQ 空间账号。" },
 };
 const PHONE_LABELS = { free: "能及时看手机", glance: "偶尔看手机", offline: "暂时不看手机" };
-const CHAT_SETTINGS = [
-  ["attention_chance", "轻忙时注意到连发消息的概率（备用）", "填 0 到 1，例如 0.35 表示 35%。当天日程提供了概率时，优先使用日程中的值。"],
-  ["reply_delay_min_seconds", "刚空闲时最短等待（秒）", "有积压消息时，会在最短与最长时间之间随机等一会儿再回复。"],
-  ["reply_delay_max_seconds", "刚空闲时最长等待（秒）", "填大于或等于最短等待的整数。等待时收到的新消息会一起处理。"],
-];
+const CARE_STATUS = { pending: "等事后关心", asked: "已关心过", done: "对方已说了结果" };
 const PHOTO_ACTIONS = { generate: "拍照", continue: "继续拍照", edit: "改图", resend: "重发照片" };
 const PHOTO_DELIVERY = {
   queued: "排队中", generating: "生成中", sending: "发送中", sent: "已确认送达",
@@ -84,7 +80,7 @@ const PATHS = {
 const $ = id => document.getElementById(id);
 const content = $("view-content"), actions = $("view-actions"), dialog = $("outfit-dialog");
 const confirmationDialog = $("confirmation-dialog");
-const state = { view: "overview", epoch: 0, season: "全部", entries: [], scheduleData: null, collecting: new Set(), collectionVersion: 0, confirmedCollections: new Map(), dirty: { profile: false, settings: false, voice: false, chat: false }, saving: { profile: false, settings: false, voice: false, chat: false }, baseline: {}, profileTask: null, profileRequest: false, profileGenerating: false, pollToken: 0, pollWaiters: new Set(), pollDeadline: null, scheduleRetrying: false, closed: false, dialog: null, dialogEpoch: 0 };
+const state = { view: "overview", epoch: 0, season: "全部", entries: [], scheduleData: null, collecting: new Set(), collectionVersion: 0, confirmedCollections: new Map(), dirty: { profile: false, settings: false, voice: false }, saving: { profile: false, settings: false, voice: false }, baseline: {}, profileTask: null, profileRequest: false, profileGenerating: false, pollToken: 0, pollWaiters: new Set(), pollDeadline: null, scheduleRetrying: false, closed: false, dialog: null, dialogEpoch: 0 };
 Object.assign(state, { setup: null, setupError: "", setupPollToken: 0, setupPollTimer: null, roleRevision: 0, dashboardFingerprint: null, photoScope: "" });
 const SETUP_STATUSES = ["waiting_settings", "preparing", "ready", "failed", "unavailable"];
 const SETUP_STAGES = { backup: "备份旧资料", profile: "生成生活档案", schedule: "生成今日日程与穿搭", ready: "准备完成" };
@@ -412,91 +408,66 @@ function renderOverview(data) {
   content.replaceChildren(current);
 }
 function renderChat(data) {
-  const reply = dashboardPanel("消息与回复", "chat");
+  const panels = [];
   const status = dashboardStatus(data, "chat");
-  const replyFacts = [
+  const summary = dashboardPanel("主动互动", "sun");
+  summary.append(dashboardFacts([
     ["手机状态", PHONE_LABELS[data.phone]],
-    ["待处理消息", dashboardCount(data.pending_count, "条")],
-    ["当前回复情况", data.waiting_reason || status],
-  ];
-  if (data.uncertain_count > 0) replyFacts.push(["送达结果未知", dashboardCount(data.uncertain_count, "条")]);
-  reply.append(dashboardFacts(replyFacts));
-  const proactive = dashboardPanel("今日主动互动", "sun");
-  const waiting = data.proactive_waiting_response;
-  proactive.append(dashboardFacts([
-    ["已主动发送", dashboardCount(data.proactive_sent_today)],
-    ["每日上限", dashboardCount(data.proactive_daily_limit)],
-    ["主动互动状态", data.proactive_reason || (waiting === true ? "等待对方回应" : status)],
+    ["主动消息", data.proactive_enabled ? "已开启" : "已关闭"],
+    ["每天最多主动联系", dashboardCount(data.daily_limit)],
+    ["连续未回复上限", data.max_unanswered === 0 ? "不限制" : dashboardCount(data.max_unanswered)],
   ]));
-  content.replaceChildren(reply, proactive, renderChatSettings(data.settings, data.can_write));
+  if (data.message || status) summary.append(dashboardNote(data.message || status));
+  if (data.memory_notice) summary.append(dashboardNote(data.memory_notice));
+  panels.push(summary);
+  for (const target of data.targets || []) panels.push(renderChatTarget(target, data.can_write));
+  content.replaceChildren(...panels);
 }
-function renderChatSettings(settings, canWrite) {
-  const panel = dashboardPanel("私聊节奏设置", "settings");
-  if (!canWrite) {
-    panel.append(dashboardFacts(CHAT_SETTINGS.map(([key, label]) => [label, String(settings[key])])));
-    panel.append(dashboardNote("当前账号可以查看设置，修改需要面板管理员权限。"));
-    return panel;
+function renderChatTarget(target, canWrite) {
+  const panel = dashboardPanel(target.target, "chat");
+  panel.append(dashboardFacts([
+    ["今天已主动联系", dashboardCount(target.rounds_today)],
+    ["今天主动发的照片", dashboardCount(target.photos_today, "张")],
+    ["连续未回复", dashboardCount(target.unanswered, "条")],
+    ["下一次想起对方", target.next_due ? dashboardTime(target.next_due) : "未安排"],
+    ["上一次主动联系", target.last_proactive ? dashboardTime(target.last_proactive) : "还没有"],
+    ["主动互动状态", target.reason],
+  ]));
+  const events = target.events || [];
+  panel.append(element("h3", "dashboard-subheading", "对方提到的事"));
+  if (!events.length) panel.append(dashboardNote("还没有记下对方提到的有时间的事。"));
+  for (const item of events) {
+    const row = element("div", "dashboard-fact");
+    row.append(element("dt", "", (item.time ? dashboardTime(item.time) + " " : "") + item.content));
+    const detail = element("dd", "", CARE_STATUS[item.status] || item.status);
+    if (canWrite) detail.append(" ", button("删除", "button secondary", () => deleteCareEvent(target.target, item), "trash"));
+    row.append(detail);
+    panel.append(row);
   }
-  const form = element("form", "dashboard-form");
-  form.id = "chat-settings-form";
-  const fields = element("div", "field-grid");
-  const inputs = CHAT_SETTINGS.map(([key, label, hint]) => {
-    const node = input("number", settings[key]);
-    node.name = key;
-    node.min = "0";
-    node.required = true;
-    const probability = key === "attention_chance";
-    node.step = probability ? "any" : "1";
-    if (probability) node.max = "1";
-    const wrapper = field(label, "chat-" + key, node, hint);
-    if (probability) wrapper.classList.add("full");
-    fields.append(wrapper);
-    return node;
-  });
-  const save = button("保存私聊设置", "button primary");
-  save.id = "chat-save"; save.type = "submit"; save.disabled = true;
-  const feedback = dashboardNote("");
-  feedback.id = "chat-save-status";
-  feedback.setAttribute("role", "status");
-  const values = () => Object.fromEntries(inputs.map(node => [node.name, node.value === "" ? null : Number(node.value)]));
-  form.addEventListener("input", () => {
-    const draft = values();
-    markDirty("chat", inputs.some(node => draft[node.name] !== settings[node.name]));
-  });
-  form.addEventListener("submit", event => {
-    event.preventDefault();
-    saveChatSettings(values(), inputs, save, feedback);
-  });
-  form.append(fields, save, feedback);
-  panel.append(form);
+  if (canWrite && target.bound) {
+    panel.append(button("重置机器人账号绑定", "button secondary", () => resetChatBinding(target.target), "refresh"));
+  }
+  if (!canWrite) panel.append(dashboardNote("修改需要面板管理员权限。"));
   return panel;
 }
-async function saveChatSettings(body, inputs, save, feedback) {
-  if (!state.dirty.chat || state.saving.chat) return;
-  if (body.reply_delay_min_seconds > body.reply_delay_max_seconds) {
-    feedback.textContent = "最短等待时间不能超过最长等待时间。";
-    return;
-  }
-  const epoch = state.epoch;
-  state.saving.chat = true;
-  for (const node of [...inputs, save]) node.disabled = true;
-  feedback.textContent = "正在保存私聊设置…";
+async function deleteCareEvent(target, item) {
+  if (!await confirmAction("删除这条记录", "删除后角色不会再就这件事关心对方。", "删除")) return;
   try {
-    const result = await post("dashboard/chat/save", body);
-    if (!sameView("chat", epoch)) return;
-    if (inputs.some(node => result.settings?.[node.name] !== body[node.name])) throw new Error("保存结果暂时无法确认，请刷新后查看。");
-    state.dirty.chat = false;
+    await post("dashboard/chat/event/delete", { target, id: item.id });
+    showToast("已删除。");
   } catch (error) {
-    if (sameView("chat", epoch)) feedback.textContent = error.message;
-    return;
-  } finally {
-    state.saving.chat = false;
-    if (sameView("chat", epoch)) {
-      for (const node of inputs) node.disabled = false;
-      save.disabled = !state.dirty.chat;
-    }
+    showToast(error.message, true);
   }
-  showToast("私聊设置已保存。");
+  await loadView("chat");
+}
+async function resetChatBinding(target) {
+  if (!await confirmAction("重置机器人账号绑定", "重置后，下一条普通消息所在的机器人账号会被重新记下。", "重置")) return;
+  try {
+    await post("dashboard/chat/binding/reset", { target });
+    showToast("已重置，请在这条私聊里发一句普通消息。");
+  } catch (error) {
+    showToast(error.message, true);
+  }
   await loadView("chat");
 }
 function renderPhotoCard(item, scope, epoch) {

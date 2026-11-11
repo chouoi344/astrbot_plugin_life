@@ -46,12 +46,12 @@ class ClarificationNeeded(RequestProblem):
 
 def exception_outcome(exc, *, action="request"):
     if isinstance(exc, RequestProblem):
-        return Outcome(
-            exc.code, action=action, status=exc.status, facts={"reason": exc.code, **exc.facts}
-        )
+        return Outcome(exc.code, action=action, status=exc.status, facts={"reason": exc.code, **exc.facts})
     if isinstance(exc, QzoneDeferred):
         return Outcome(
-            "space_waiting", action=action, status="waiting",
+            "space_waiting",
+            action=action,
+            status="waiting",
             facts={"result": "空间暂时需要等待，当前操作尚未发送；稍后可再试"},
         )
     if isinstance(exc, PermissionError):

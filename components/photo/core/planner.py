@@ -4,7 +4,7 @@ Adapted from the user's preserved stage2-photo core/photo_prompts.py and
 photo_poses.py. Portrait texture/capture wording originates from the authorized
 astrbot_plugin_gitee_aiimg v5.7.8 main.py:_build_selfie_prompt, by 木有知、Zhalslar:
 https://github.com/muyouzhi6/astrbot_plugin_gitee_aiimg
-The 4K size table follows that plugin's core/output_spec.py: GPT_IMAGE_2_SIZE_MAP.
+The 1K/2K/4K size idea follows that plugin's core/output_spec.py (see core/sizes.py).
 """
 
 import re
@@ -30,21 +30,11 @@ from .poses import (
     wants_visible_reaction,
     without_expression_cues,
 )
+from .sizes import DEFAULT_RATIO, SIZES_4K, SizeSetting
 
-SIZE_MAP = {
-    "1:1": "2880x2880",
-    "16:9": "3840x2160",
-    "9:16": "2160x3840",
-    "5:4": "3200x2560",
-    "4:5": "2560x3200",
-    "4:3": "3264x2448",
-    "3:4": "2448x3264",
-    "3:2": "3504x2336",
-    "2:3": "2336x3504",
-    "21:9": "3808x1632",
-}
+# Ratios accepted from chat; actual pixel sizes come from the size setting.
+SIZE_MAP = SIZES_4K
 
-DEFAULT_RATIO = "3:4"
 _RATIO_LITERAL = re.compile(r"(?<![0-9])([0-9]{1,2})\s*[:：比]\s*([0-9]{1,2})(?![0-9])")
 _RATIO_NEGATION = re.compile(
     r"(?:不要|别|不用|不想(?:要)?)(?:再)?\s*"
@@ -54,13 +44,10 @@ _RATIO_NEGATION = re.compile(
 
 
 def _affirmative_ratio_match(pattern: str, clause: str) -> bool:
-    return any(
-        not _RATIO_NEGATION.search(clause[: match.start()])
-        for match in re.finditer(pattern, clause)
-    )
+    return any(not _RATIO_NEGATION.search(clause[: match.start()]) for match in re.finditer(pattern, clause))
 
 
-def _requested_ratio(text: str, proposed: str) -> str:
+def _requested_ratio(text: str, proposed: str, default: str = DEFAULT_RATIO) -> str:
     clauses = re.split(r"[，,。；;！？!?]", text)
     rejected = set()
     for clause in clauses:
@@ -73,23 +60,21 @@ def _requested_ratio(text: str, proposed: str) -> str:
                     return ratio
     if proposed in rejected:
         proposed = ""
-    width, height = map(int, (proposed or DEFAULT_RATIO).split(":"))
+    width, height = map(int, (proposed or default).split(":"))
     for clause in clauses:
         if _affirmative_ratio_match(r"正方形|方形(?:照片|图)|方图", clause):
             return "1:1"
-        if _affirmative_ratio_match(
-            r"横屏|横图|横幅|横版|横向|宽屏(?!显示器|电视)", clause
-        ):
+        if _affirmative_ratio_match(r"横屏|横图|横幅|横版|横向|宽屏(?!显示器|电视)", clause):
             if proposed and width > height:
                 return proposed
             return "4:3" if "16:9" in rejected else "16:9"
         if _affirmative_ratio_match(r"竖屏|竖图|竖幅|竖版|竖向", clause):
-            return DEFAULT_RATIO
+            return default
         if proposed and _affirmative_ratio_match(
             r"(?:保持|沿用|按|还是).{0,8}(?:原图|原来|刚才|上[一]?张).{0,4}比例", clause
         ):
             return proposed
-    return DEFAULT_RATIO
+    return default
 
 
 # Adapted from the authorized reference author's capture policy, preserving the
@@ -111,18 +96,14 @@ _FOOD_STYLING = re.compile(
     r"(?:散发着|冒着)?腾腾热气|热气腾腾|大量蒸汽|浓烈蒸汽"
 )
 _FOOD_STYLE_REQUEST = re.compile(r"广告|美食海报|油光|红亮|热气|蒸汽")
-_LIFE_ANCHOR = re.compile(
-    r"此刻|现在|当前|眼前|窗外|你(?:的周围|那边|那里|所在|正在|在吃)|日程"
-)
+_LIFE_ANCHOR = re.compile(r"此刻|现在|当前|眼前|窗外|你(?:的周围|那边|那里|所在|正在|在吃)|日程")
 
 
 def _ordinary_food_text(text: str) -> str:
     if not _FOOD_STYLING.search(text):
         return text
     return "，".join(
-        rest
-        for clause in re.split(r"[，,；;。]", text)
-        if (rest := _FOOD_STYLING.sub("", clause).strip())
+        rest for clause in re.split(r"[，,；;。]", text) if (rest := _FOOD_STYLING.sub("", clause).strip())
     )
 
 
@@ -159,13 +140,8 @@ def parse_shot_plan(value, count: int) -> tuple[ShotSpec, ...]:
     result = []
     for row in value:
         if not isinstance(row, dict) or set(row) - set(_SPEC_FIELDS):
-            raise ValueError(
-                "逐张方案只支持capture、framing、angle、action、expression五个字段"
-            )
-        if any(
-            not isinstance(text, str) or len(text) > 240 or "\x00" in text
-            for text in row.values()
-        ):
+            raise ValueError("逐张方案只支持capture、framing、angle、action、expression五个字段")
+        if any(not isinstance(text, str) or len(text) > 240 or "\x00" in text for text in row.values()):
             raise ValueError("逐张方案的每项应为不超过240字的文字")
         cleaned = {field: text.strip() for field, text in row.items()}
         if not any(cleaned.values()):
@@ -194,9 +170,7 @@ def selected_outfit(state: dict) -> dict:
         return {"description": outfits}
     key = slot.get("outfit_key", "")
     if key.startswith("sports:"):
-        value = next(
-            (row for row in outfits.get("sports", []) if row.get("key") == key), {}
-        )
+        value = next((row for row in outfits.get("sports", []) if row.get("key") == key), {})
     else:
         value = outfits.get(key or slot.get("outfit_type"), {})
     return {"description": value} if isinstance(value, str) else value
@@ -209,11 +183,7 @@ def _outfit_description(value: dict | str) -> str:
     if description:
         return re.sub(r"^(?:临时搭配\s*[:：]\s*)+", "", description).strip()
     parts = value.get("parts", value)
-    return "；".join(
-        label + "：" + parts[key].strip()
-        for key, label in _OUTFIT_PARTS
-        if parts.get(key)
-    )
+    return "；".join(label + "：" + parts[key].strip() for key, label in _OUTFIT_PARTS if parts.get(key))
 
 
 def has_portrait_scene_text(state: dict, life_status: str) -> bool:
@@ -222,10 +192,7 @@ def has_portrait_scene_text(state: dict, life_status: str) -> bool:
     return (
         life_status == "ready"
         and bool(str(slot.get("location") or "").strip())
-        and bool(
-            _outfit_description(selected_outfit(state))
-            or _outfit_description(slot.get("outfit", ""))
-        )
+        and bool(_outfit_description(selected_outfit(state)) or _outfit_description(slot.get("outfit", "")))
     )
 
 
@@ -285,21 +252,13 @@ def _fixed_context(
         lines.extend(
             [
                 status + "。没有可用生活状态，仅按用户要求和本次参考图用途创作。",
-                (
-                    "没有用户明确指定的环境、衣服与画风"
-                    if people
-                    else "没有用户明确指定的环境、主体与风格"
-                )
+                ("没有用户明确指定的环境、衣服与画风" if people else "没有用户明确指定的环境、主体与风格")
                 + "由首张确定，后续沿用；不得声称这些细节来自角色此刻的生活状态。",
             ]
         )
         return "\n".join(lines), {}
     if not people and (
-        not use_current_scene
-        or (
-            photo_type == "food"
-            and not re.search(r"吃|餐|饭|宵夜", slot.get("activity") or "")
-        )
+        not use_current_scene or (photo_type == "food" and not re.search(r"吃|餐|饭|宵夜", slot.get("activity") or ""))
     ):
         lines.append("按用户本轮指定的画面取景，环境与主体由用户要求及本组首张确定。")
         return "\n".join(lines), {}
@@ -312,19 +271,14 @@ def _fixed_context(
         ("天气", weather.get("summary")),
         (
             "光线",
-            slot.get("lighting")
-            or slot.get("light")
-            or state.get("lighting")
-            or state.get("light"),
+            slot.get("lighting") or slot.get("light") or state.get("lighting") or state.get("light"),
         ),
         ("背景", slot.get("background") or state.get("background")),
     )
     lines.extend(label + "：" + str(value) for label, value in known if value)
     if people:
         outfit = selected_outfit(state)
-        wearing = _outfit_description(outfit) or _outfit_description(
-            slot.get("outfit", "")
-        )
+        wearing = _outfit_description(outfit) or _outfit_description(slot.get("outfit", ""))
         hair = _hair(state, outfit, wearing)
         if wearing:
             lines.append("角色穿搭：" + wearing)
@@ -360,18 +314,14 @@ _OUTFIT_DETAIL_CUE = re.compile(
 )
 
 
-def body_reference_framing(
-    framing: str, user_text: str, *, single_outfit: bool = False
-) -> bool:
+def body_reference_framing(framing: str, user_text: str, *, single_outfit: bool = False) -> bool:
     """Use the optional body reference only when the final shot shows the whole body."""
     return (
         group_field_key("framing", framing) == "full"
         and not _NO_FULL_BODY.search(framing)
         and not _NO_FULL_BODY.search(user_text)
         and not (
-            single_outfit
-            and _OUTFIT_DETAIL_CUE.search(user_text)
-            and not re.search(_FULL_BODY_CUE, user_text, re.I)
+            single_outfit and _OUTFIT_DETAIL_CUE.search(user_text) and not re.search(_FULL_BODY_CUE, user_text, re.I)
         )
     )
 
@@ -385,10 +335,7 @@ def continuation_role(
 ) -> str:
     prefix = "上一张成功照片："
     if photo_type == "food":
-        return (
-            prefix
-            + "延续原图实际可见的同一份食物、容器、摆放和环境，按本张方案换取景。"
-        )
+        return prefix + "延续原图实际可见的同一份食物、容器、摆放和环境，按本张方案换取景。"
     if photo_type == "scene" or generic:
         return prefix + "以原图实际可见的主体、画风和环境为准，按用户原话调整本张画面。"
     return (
@@ -416,16 +363,9 @@ def scene_reference_note(
 ) -> str:
     """Keep group context continuous without competing with original identity images."""
     if generic:
-        return (
-            f"第{index}张参考图是本组首张成片，延续同一主体与用户要求，"
-            "按本张方案改变未锁定的取景。"
-        )
+        return f"第{index}张参考图是本组首张成片，延续同一主体与用户要求，按本张方案改变未锁定的取景。"
     if photo_type in {"scene", "food"}:
-        subject = (
-            "同一份食物、已有容器、摆放"
-            if photo_type == "food"
-            else "同一主体、地点与主要物件"
-        )
+        subject = "同一份食物、已有容器、摆放" if photo_type == "food" else "同一主体、地点与主要物件"
         return (
             f"第{index}张参考图是本组首张成片，仅延续{subject}及环境、时间与光线。"
             "画面风格按用户要求，不绑定人物参考图的身份或画风。"
@@ -482,9 +422,9 @@ _NEGATIVES = (
 
 
 def _wide_framing(framing: str) -> bool:
-    return bool(
-        re.search(r"全身|头到脚|中景|远景|full[- ]body", framing, re.I)
-    ) and not bool(re.search(r"(?:不要|别|不拍|不想).{0,3}全身", framing))
+    return bool(re.search(r"全身|头到脚|中景|远景|full[- ]body", framing, re.I)) and not bool(
+        re.search(r"(?:不要|别|不拍|不想).{0,3}全身", framing)
+    )
 
 
 def _capture(framing: str, slot: dict, used: list[str], requested: str = "") -> str:
@@ -509,9 +449,7 @@ def _capture(framing: str, slot: dict, used: list[str], requested: str = "") -> 
 
 def _without_handheld(text: str) -> str:
     return "，".join(
-        clause.strip()
-        for clause in re.split(r"[，,；;。]", text)
-        if clause.strip() and not is_handheld_capture(clause)
+        clause.strip() for clause in re.split(r"[，,；;。]", text) if clause.strip() and not is_handheld_capture(clause)
     )
 
 
@@ -616,11 +554,7 @@ def _specs(
 ):
     locks = user_constraints(user_text)
     if photo_type == "food" and "framing" not in locks:
-        detail = [
-            clause.strip()
-            for clause in re.split(r"[，,。.!！?？；;\n]", user_text)
-            if "特写" in clause
-        ]
+        detail = [clause.strip() for clause in re.split(r"[，,。.!！?？；;\n]", user_text) if "特写" in clause]
         if detail:
             locks["framing"] = "；".join(detail)
     people = photo_type in {"selfie", "outfit"}
@@ -648,24 +582,12 @@ def _specs(
     result = []
     for index in range(count):
         proposed = (
-            ShotSpec(
-                **{
-                    field: transform(getattr(shot_plan[index], field))
-                    for field in _SPEC_FIELDS
-                }
-            )
+            ShotSpec(**{field: transform(getattr(shot_plan[index], field)) for field in _SPEC_FIELDS})
             if shot_plan
             else ShotSpec()
         )
-        needs_seed = any(
-            field not in locks and not getattr(proposed, field)
-            for field in ("angle", "action")
-        )
-        seed = (
-            choose_pose(slot, recent, user_text, photo_type, used_ids)
-            if needs_seed
-            else None
-        )
+        needs_seed = any(field not in locks and not getattr(proposed, field) for field in ("angle", "action"))
+        seed = choose_pose(slot, recent, user_text, photo_type, used_ids) if needs_seed else None
         framing_pool = (
             _FRAMINGS
             if people
@@ -681,15 +603,9 @@ def _specs(
         if portrait_group and is_handheld_capture(locks.get("capture", "")):
             framing_pool = _FRAMINGS[:2]
         if count == 1 and previous is None:
-            default_frame = (
-                _FRAMINGS[3 if photo_type == "outfit" else 0]
-                if people
-                else framing_pool[0]
-            )
+            default_frame = _FRAMINGS[3 if photo_type == "outfit" else 0] if people else framing_pool[0]
         else:
-            default_frame = varied_choice(
-                framing_pool, [spec.framing for spec in history]
-            )
+            default_frame = varied_choice(framing_pool, [spec.framing for spec in history])
         framing = locks.get("framing") or proposed.framing or default_frame
         if portrait_group and "framing" not in locks:
             framing = _concrete_group_framing(framing, proposed.action)
@@ -705,9 +621,7 @@ def _specs(
             if photo_type == "food"
             else "手机后置镜头取景，设备位于画面外",
             "framing": framing,
-            "angle": seed["angle"]
-            if seed
-            else varied_choice(angle_pool, [spec.angle for spec in history]),
+            "angle": seed["angle"] if seed else varied_choice(angle_pool, [spec.angle for spec in history]),
             "action": seed["action"]
             if seed
             else "保持同一份食物与摆盘"
@@ -720,10 +634,7 @@ def _specs(
             if people
             else "",
         }
-        values = {
-            field: locks.get(field) or getattr(proposed, field) or defaults[field]
-            for field in _SPEC_FIELDS
-        }
+        values = {field: locks.get(field) or getattr(proposed, field) or defaults[field] for field in _SPEC_FIELDS}
         values["framing"] = framing
         fixed_camera = result[0][0] if group_composition_fixed and result else None
         if fixed_camera:
@@ -757,9 +668,7 @@ def _specs(
                     if re.search(opposite, value) and not re.search(negative, value):
                         values[field] = locks.get(field) or clause
         values["capture"] = (
-            _capture(
-                framing, slot, [spec.capture for spec in history], values["capture"]
-            )
+            _capture(framing, slot, [spec.capture for spec in history], values["capture"])
             if people and not fixed_camera
             else values["capture"]
         )
@@ -786,17 +695,11 @@ def _specs(
             if current_angle == previous_angle:
                 if people:
                     distinct_angles = tuple(
-                        angle
-                        for angle in angle_pool
-                        if angle_key("angle", angle) != previous_angle
+                        angle for angle in angle_pool if angle_key("angle", angle) != previous_angle
                     )
                 else:
-                    distinct_angles = (
-                        _ANGLES[1:] if previous_angle == "微侧" else angle_pool
-                    )
-                values["angle"] = _new_value(
-                    "angle", distinct_angles, history, key=angle_key
-                )
+                    distinct_angles = _ANGLES[1:] if previous_angle == "微侧" else angle_pool
+                values["angle"] = _new_value("angle", distinct_angles, history, key=angle_key)
         spec = ShotSpec(**values)
         used_compositions = {composition(item) for item in history}
         if composition(spec) in used_compositions and not group_composition_fixed:
@@ -805,9 +708,7 @@ def _specs(
                     continue
                 values[field] = _new_value(field, options, history, key=compare_key)
                 if field == "framing" and portrait_group:
-                    values[field] = _concrete_group_framing(
-                        values[field], values["action"]
-                    )
+                    values[field] = _concrete_group_framing(values[field], values["action"])
                 if field == "framing" and people:
                     values["capture"] = _capture(
                         values["framing"],
@@ -820,15 +721,12 @@ def _specs(
                         and "action" not in locks
                         and not re.search(r"对镜|镜前|镜面", values["capture"])
                     ):
-                        values["action"] = (
-                            _without_handheld(values["action"]) or "自然站立拍摄"
-                        )
+                        values["action"] = _without_handheld(values["action"]) or "自然站立拍摄"
                 spec = ShotSpec(**values)
                 if composition(spec) not in used_compositions:
                     break
         uses_seed = seed is not None and any(
-            field not in locks and not getattr(proposed, field)
-            for field in ("angle", "action")
+            field not in locks and not getattr(proposed, field) for field in ("angle", "action")
         )
         pose_id = seed["id"] if uses_seed else ""
         if seed is not None:
@@ -855,21 +753,21 @@ def make_plan(
     current_mood_intensity: str | None = None,
     source_continuity: bool = False,
     use_current_scene: bool | None = None,
+    size_setting: SizeSetting | None = None,
 ) -> list[Shot]:
     """Build a set from already-validated input and one frozen life-state snapshot."""
     people = photo_type in {"selfie", "outfit"}
     actual_text = (user_prompt if user_text is None else user_text).strip()
+    size_setting = size_setting or SizeSetting()
     ratio = (
         aspect_ratio
         if user_text is None and aspect_ratio
-        else _requested_ratio(actual_text, aspect_ratio)
+        else _requested_ratio(actual_text, aspect_ratio, size_setting.ratio)
     )
-    size = SIZE_MAP[ratio]
+    size = size_setting.size_for(ratio)
     if use_current_scene is None:
         use_current_scene = bool(_LIFE_ANCHOR.search(actual_text))
-    fixed, slot = _fixed_context(
-        state, photo_type, life_status, source_continuity, use_current_scene
-    )
+    fixed, slot = _fixed_context(state, photo_type, life_status, source_continuity, use_current_scene)
     mood = str(slot.get("mood") or "") if current_mood is None else current_mood
     intensity = slot.get("mood_intensity") if current_mood_intensity is None else current_mood_intensity
     keep_expression = people and source_continuity and keeps_expression(actual_text)
@@ -877,8 +775,7 @@ def make_plan(
     no_teeth = people and suppresses_teeth(actual_text)
     strong_smile = people and bool(strong_smile_request(actual_text))
     natural_food = photo_type == "food" and not any(
-        _FOOD_STYLE_REQUEST.search(clause)
-        and not re.search(r"不要|别|不用|避免", clause)
+        _FOOD_STYLE_REQUEST.search(clause) and not re.search(r"不要|别|不用|避免", clause)
         for clause in re.split(r"[，,。；;]", actual_text)
     )
 
@@ -893,20 +790,12 @@ def make_plan(
 
     summary = model_text(user_prompt.strip())
     identity_indices = (
-        [
-            index
-            for index, role in enumerate(reference_roles, 1)
-            if role.startswith(("角色身份", "用户身份"))
-        ]
+        [index for index, role in enumerate(reference_roles, 1) if role.startswith(("角色身份", "用户身份"))]
         if people
         else []
     )
     identities = (
-        {
-            role.split("：", 1)[0]
-            for role in reference_roles
-            if role.startswith(("角色身份", "用户身份"))
-        }
+        {role.split("：", 1)[0] for role in reference_roles if role.startswith(("角色身份", "用户身份"))}
         if people
         else set()
     )
@@ -946,9 +835,7 @@ def make_plan(
                 "衣服参考只用于角色，不给用户复制角色的穿搭；用户穿搭按用户本次要求。"
                 "场景、衣服或原图编辑参考均不得被当成人脸身份图。"
             )
-    shared.append(
-        "用户原话（最高优先级，只锁定明确指定的维度）：" + (actual_text or "记录这一刻")
-    )
+    shared.append("用户原话（最高优先级，只锁定明确指定的维度）：" + (actual_text or "记录这一刻"))
     if people:
         if count > 1:
             shared.append(
@@ -957,14 +844,9 @@ def make_plan(
                 "用户明确固定的维度保持；笑幅按本张自然神态。"
             )
         if keep_expression:
-            shared.append(
-                "表情按来源成片实际可见的神态保持，当前聊天和日程心情不覆盖。"
-            )
+            shared.append("表情按来源成片实际可见的神态保持，当前聊天和日程心情不覆盖。")
         elif mood:
-            shared.append(
-                f"本次心情：{mood}。用户指定的表情优先，其次采用本张聊天规划的表情，"
-                "心情只补未指定的表情。"
-            )
+            shared.append(f"本次心情：{mood}。用户指定的表情优先，其次采用本张聊天规划的表情，心情只补未指定的表情。")
         if not keep_expression:
             expression_strength = {
                 "中性": "神态自然放松，保留细微表情",
@@ -998,15 +880,12 @@ def make_plan(
         sections = list(shared)
         shot_summary = (
             _without_handheld(summary)
-            if people
-            and _wide_framing(spec.framing)
-            and not re.search(r"对镜|镜前|镜面", spec.capture)
+            if people and _wide_framing(spec.framing) and not re.search(r"对镜|镜前|镜面", spec.capture)
             else summary
         )
         if user_text is not None and shot_summary and shot_summary != actual_text:
             sections.append(
-                "聊天理解摘要（用于当前聊天、人设语气和情绪的补充；其中扩写不是用户新增的硬要求）："
-                + shot_summary
+                "聊天理解摘要（用于当前聊天、人设语气和情绪的补充；其中扩写不是用户新增的硬要求）：" + shot_summary
             )
         labels = ("拍法", "取景与距离", "角度", "小拍照动作", "可见表情")
         sections.append(
@@ -1019,22 +898,12 @@ def make_plan(
         )
         sections.append(
             f"本组第{number}张，共{count}张。"
-            + (
-                "人物身份、原画风、衣服和环境连续；"
-                if people
-                else "主体、既有容器与环境连续，画面风格按用户要求；"
-            )
-            + (
-                "未被用户固定的角度、距离、动作与视线"
-                if people
-                else "未被用户固定的取景距离与角度"
-            )
+            + ("人物身份、原画风、衣服和环境连续；" if people else "主体、既有容器与环境连续，画面风格按用户要求；")
+            + ("未被用户固定的角度、距离、动作与视线" if people else "未被用户固定的取景距离与角度")
             + "按本张方案形成可见差异，不能只是首张的轻微抖动或重复构图。"
         )
         prompt = "\n\n".join(sections)
         if identity_indices:
-            prompt = apply_face_lock(
-                prompt, identity_indices, multi_person=len(identities) > 1
-            )
+            prompt = apply_face_lock(prompt, identity_indices, multi_person=len(identities) > 1)
         shots.append(Shot(prompt, size, pose_id, spec))
     return shots

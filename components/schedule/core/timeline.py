@@ -55,8 +55,16 @@ def business_window(now, schedule_time="07:00"):
 
 
 def _sleep_slot(start, end):
-    return {"start": start.isoformat(), "end": end.isoformat(), "activity": "睡觉", "location": "住处",
-            "phone": "offline", "rest_type": "night_sleep", "mood": "平静", "outfit_type": "sleepwear"}
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "activity": "睡觉",
+        "location": "住处",
+        "phone": "offline",
+        "rest_type": "night_sleep",
+        "mood": "平静",
+        "outfit_type": "sleepwear",
+    }
 
 
 def _normalize_slot(slot, tz, *, new_slot=False):
@@ -73,15 +81,21 @@ def _normalize_slot(slot, tz, *, new_slot=False):
         raise ValueError("时间段缺少活动")
     if "mood_intensity" in result and result["mood_intensity"] not in ("中性", "有波动", "强烈"):
         raise ValueError("mood_intensity只可填中性、有波动、强烈")
-    if "proactive_cooldown_minutes" in result:
-        minutes = result["proactive_cooldown_minutes"]
-        if type(minutes) is not int or not 5 <= minutes <= 120:
-            raise ValueError("proactive_cooldown_minutes应为5到120的整数")
+    # v1.3.x slots carried a proactive cooldown; proactive timing no longer uses it.
+    result.pop("proactive_cooldown_minutes", None)
     text = result["activity"] + result["location"]
     if result.get("phone") not in {"free", "glance", "offline"}:
-        result["phone"] = "offline" if re.search(r"睡|考试|游泳|驾车|开车", text) else "free" if re.search(r"休息|玩手机|刷手机|闲聊", text) else "glance"
+        result["phone"] = (
+            "offline"
+            if re.search(r"睡|考试|游泳|驾车|开车", text)
+            else "free"
+            if re.search(r"休息|玩手机|刷手机|闲聊", text)
+            else "glance"
+        )
     if result.get("outfit_type") not in {"sleepwear", "home", "outdoor"}:
-        result["outfit_type"] = "sleepwear" if "睡" in text else "home" if re.search(r"家|宿舍|住处", text) else "outdoor"
+        result["outfit_type"] = (
+            "sleepwear" if "睡" in text else "home" if re.search(r"家|宿舍|住处", text) else "outdoor"
+        )
     result["start"], result["end"] = start.isoformat(), end.isoformat()
     result = project_slot_rest(result)
     if not new_slot and "rest_type" not in slot and result["rest_type"] == "none":
@@ -112,8 +126,16 @@ def repair_slots(slots, start, end, forbidden=(), min_slots=6, user_aliases=()):
                 if kind == "nap":
                     item.update(activity="午睡", rest_type="nap")
             else:
-                item = {"start": a.isoformat(), "end": b.isoformat(), "activity": "处理自己的日常事务", "location": "住处",
-                        "phone": "glance", "rest_type": "none", "mood": "平静", "outfit_type": "home"}
+                item = {
+                    "start": a.isoformat(),
+                    "end": b.isoformat(),
+                    "activity": "处理自己的日常事务",
+                    "location": "住处",
+                    "phone": "glance",
+                    "rest_type": "none",
+                    "mood": "平静",
+                    "outfit_type": "home",
+                }
             replaced += 1
         item["start"], item["end"] = max(start, a).isoformat(), min(end, b).isoformat()
         normalized.append(item)
@@ -148,7 +170,7 @@ def repair_slots(slots, start, end, forbidden=(), min_slots=6, user_aliases=()):
     if len(repaired) < min_slots:
         raise ValueError("修复重叠后有效时间段少于 %d 段" % min_slots)
     if replaced:
-        logger.info("已替换 %s 段角色与主人的受限互动，其余日程保留", replaced)
+        logger.info("[生活日程] 已替换 %s 段角色与主人的受限互动，其余日程保留", replaced)
     return repaired
 
 
@@ -177,8 +199,6 @@ def merge_future(actual, changes, now, end, forbidden=(), user_aliases=()):
             if right <= a or left >= b:
                 updated.append(original)
                 continue
-            if left <= a and "proactive_cooldown_minutes" in original:
-                change.setdefault("proactive_cooldown_minutes", original["proactive_cooldown_minutes"])
             if left < a:
                 front = copy.deepcopy(original)
                 front["end"] = a.isoformat()
@@ -194,7 +214,9 @@ def merge_future(actual, changes, now, end, forbidden=(), user_aliases=()):
         if parse_local(left["end"], now.tzinfo) != parse_local(right["start"], now.tzinfo):
             raise ValueError("合并后的时间轴存在空档或重叠")
     if actual and result:
-        if parse_local(actual[0]["start"], now.tzinfo) != parse_local(result[0]["start"], now.tzinfo) or parse_local(actual[-1]["end"], now.tzinfo) != parse_local(result[-1]["end"], now.tzinfo):
+        if parse_local(actual[0]["start"], now.tzinfo) != parse_local(result[0]["start"], now.tzinfo) or parse_local(
+            actual[-1]["end"], now.tzinfo
+        ) != parse_local(result[-1]["end"], now.tzinfo):
             raise ValueError("修改超出了原有时间轴")
     return result
 
@@ -228,5 +250,18 @@ def format_timeline(slots, now=None, outfit_label=None):
             a, b = dt.datetime.fromisoformat(item["start"]), dt.datetime.fromisoformat(item["end"])
         marker = "▶ " if now is not None and a <= now < b else "✓ " if now is not None and b <= now else "  "
         next_day = "次日" if b.date() > a.date() else ""
-        lines.append("%s%s—%s%s %s｜%s｜%s｜%s｜%s" % (marker, a.strftime("%H:%M"), next_day, b.strftime("%H:%M"), item.get("activity", ""), item.get("location", ""), phones.get(item.get("phone"), "偶尔看手机"), item.get("mood", ""), outfit_label(item)))
+        lines.append(
+            "%s%s—%s%s %s｜%s｜%s｜%s｜%s"
+            % (
+                marker,
+                a.strftime("%H:%M"),
+                next_day,
+                b.strftime("%H:%M"),
+                item.get("activity", ""),
+                item.get("location", ""),
+                phones.get(item.get("phone"), "偶尔看手机"),
+                item.get("mood", ""),
+                outfit_label(item),
+            )
+        )
     return "\n".join(lines)

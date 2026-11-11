@@ -15,25 +15,13 @@ import httpx
 from astrbot.api import logger as log
 from PIL import Image, UnidentifiedImageError
 
+from .sizes import smaller_size
+
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
 MAX_IMAGE_PIXELS = 64_000_000
 MAX_RESPONSE_BYTES = MAX_IMAGE_BYTES * 4 // 3 + 1024 * 1024
-REQUEST_TIMEOUT = 180
-
-# Exact dimensions retained from the earlier photo provider's fixed policy.
-_SMALLER_SIZES = {
-    "2880x2880": "2048x2048",
-    "3840x2160": "2048x1152",
-    "2160x3840": "1152x2048",
-    "3200x2560": "2080x1664",
-    "2560x3200": "1664x2080",
-    "3264x2448": "2048x1536",
-    "2448x3264": "1536x2048",
-    "3504x2336": "2064x1376",
-    "2336x3504": "1376x2064",
-    "3808x1632": "2016x864",
-    "4096x4096": "2048x2048",
-}
+# One image request, size fallbacks and rate-limit waits included (v1.4.3: 180 -> 600 s).
+REQUEST_TIMEOUT = 600
 
 
 class PhotoError(RuntimeError):
@@ -50,11 +38,9 @@ def _http_url(value: str):
             or parsed.password is not None
         ):
             raise ValueError
-        parsed.port
+        _ = parsed.port  # 端口不合法时这里会抛出 ValueError
     except (ValueError, TypeError, AttributeError):
-        raise PhotoError(
-            "图片服务地址需要有效的 HTTP 或 HTTPS 地址，地址中不能带账号密码"
-        ) from None
+        raise PhotoError("图片服务地址需要有效的 HTTP 或 HTTPS 地址，地址中不能带账号密码") from None
     return parsed
 
 
@@ -155,9 +141,7 @@ def _invalid_size(status: int, body: bytes) -> bool:
         if param and param != "size":
             return False
         code = str(error.get("code") or "").lower()
-        if code in {"invalid_size", "unsupported_size"} or (
-            param == "size" and code == "invalid_value"
-        ):
+        if code in {"invalid_size", "unsupported_size"} or (param == "size" and code == "invalid_value"):
             return True
         message = str(error.get("message") or error.get("detail") or "").lower()
     else:
@@ -175,10 +159,7 @@ def _invalid_size(status: int, body: bytes) -> bool:
                 "not one of",
             )
         )
-    ) or (
-        "尺寸" in message
-        and any(term in message for term in ("无效", "不支持", "不允许", "超出"))
-    )
+    ) or ("尺寸" in message and any(term in message for term in ("无效", "不支持", "不允许", "超出")))
 
 
 def _unaccepted_rate_limit(status: int, body: bytes) -> bool:
@@ -188,9 +169,7 @@ def _unaccepted_rate_limit(status: int, body: bytes) -> bool:
         payload = json.loads(body)
     except (ValueError, UnicodeDecodeError, RecursionError):
         return False
-    if not isinstance(payload, dict) or any(
-        name in payload for name in ("data", "id", "task_id", "job_id")
-    ):
+    if not isinstance(payload, dict) or any(name in payload for name in ("data", "id", "task_id", "job_id")):
         return False
     error = payload.get("error")
     return isinstance(error, dict) and error.get("code") in {
@@ -240,6 +219,7 @@ class PhotoClient:
         model: str,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        proxy: str | None = None,
     ):
         self.base_url = normalize_base_url(base_url)
         if not isinstance(model, str) or not model.strip():
@@ -247,10 +227,7 @@ class PhotoClient:
         if (
             not isinstance(api_keys, tuple)
             or not api_keys
-            or any(
-                not isinstance(key, str) or not re.fullmatch(r"[\x21-\x7e]+", key)
-                for key in api_keys
-            )
+            or any(not isinstance(key, str) or not re.fullmatch(r"[\x21-\x7e]+", key) for key in api_keys)
         ):
             raise PhotoError("请填写有效的生图密钥，每把密钥单独填写")
         self.model, self.api_keys = model, api_keys
@@ -258,8 +235,10 @@ class PhotoClient:
         options = {
             "timeout": httpx.Timeout(REQUEST_TIMEOUT, connect=15),
             "follow_redirects": False,
+            # Follow AstrBot's own proxy setting instead of the raw environment (item 20).
             "trust_env": False,
             "transport": transport,
+            "proxy": proxy if transport is None else None,
         }
         self._api = httpx.AsyncClient(**options)
         # Keep service cookies and authentication out of image downloads.
@@ -276,9 +255,7 @@ class PhotoClient:
             files = []
             for index, data in enumerate(references, 1):
                 mime, extension = _reference_mime(data)
-                files.append(
-                    ("image[]", (f"reference_{index}.{extension}", data, mime))
-                )
+                files.append(("image[]", (f"reference_{index}.{extension}", data, mime)))
             kwargs = {"data": fields, "files": files}
             endpoint = "/images/edits"
         else:
@@ -294,18 +271,14 @@ class PhotoClient:
         ) as response:
             if not 200 <= response.status_code < 300:
                 body = await _read_response(response, 64 * 1024)
-                raise _HTTPError(
-                    response.status_code, body, response.headers.get("Retry-After")
-                )
+                raise _HTTPError(response.status_code, body, response.headers.get("Retry-After"))
             body = await _read_response(response, MAX_RESPONSE_BYTES)
             if response.headers.get("Content-Type", "").lower().startswith("image/"):
                 return body
             try:
                 return json.loads(body)
             except (ValueError, UnicodeDecodeError, RecursionError):
-                raise PhotoError(
-                    "生图服务返回的内容格式有误，请稍后检查服务记录"
-                ) from None
+                raise PhotoError("生图服务返回的内容格式有误，请稍后检查服务记录") from None
 
     async def _download(self, url: str) -> bytes:
         # Private addresses are allowed; every hop still needs a credential-free HTTP URL.
@@ -333,11 +306,7 @@ class PhotoClient:
             data = payload
         else:
             values = payload.get("data") if isinstance(payload, dict) else None
-            if (
-                not isinstance(values, list)
-                or not values
-                or not isinstance(values[0], dict)
-            ):
+            if not isinstance(values, list) or not values or not isinstance(values[0], dict):
                 raise PhotoError("生图服务没有返回有效图片，请检查服务记录")
             first = values[0]
             if first.get("b64_json"):
@@ -349,10 +318,8 @@ class PhotoClient:
         data, _, actual_size = await asyncio.to_thread(_verified_image, data)
         return data, actual_size
 
-    async def _generate(
-        self, prompt: str, references: list[bytes], size: str, key: str
-    ) -> bytes:
-        size_fallback_used, rate_retries = False, 0
+    async def _generate(self, prompt: str, references: list[bytes], size: str, key: str) -> bytes:
+        step_downs, rate_retries = 0, 0
         while True:
             try:
                 payload = await self._request(prompt, references, size, key)
@@ -365,21 +332,20 @@ class PhotoClient:
                     )
                 return data
             except _HTTPError as exc:
-                smaller = _SMALLER_SIZES.get(size)
-                if exc.invalid_size and smaller and not size_fallback_used:
+                smaller = smaller_size(size)
+                if exc.invalid_size and smaller and step_downs < 2:
                     log.warning(
-                        "生图服务不支持图片尺寸 %s，保持比例降到 %s 再试一次",
+                        "生图服务不支持图片尺寸 %s，保持比例降到 %s 再试",
                         size,
                         smaller,
                     )
-                    size, size_fallback_used = smaller, True
+                    size, step_downs = smaller, step_downs + 1
                     continue
                 if exc.retryable and rate_retries < 2:
                     rate_retries += 1
                     delay = (
                         float(exc.retry_after)
-                        if exc.retry_after
-                        and re.fullmatch(r"\d+(?:\.\d+)?", exc.retry_after)
+                        if exc.retry_after and re.fullmatch(r"\d+(?:\.\d+)?", exc.retry_after)
                         else rate_retries
                     )
                     await asyncio.sleep(min(delay, 30))
@@ -391,21 +357,13 @@ class PhotoClient:
         key = self.api_keys[self._key_index]
         self._key_index = (self._key_index + 1) % len(self.api_keys)
         try:
-            return await asyncio.wait_for(
-                self._generate(prompt, references, size, key), REQUEST_TIMEOUT
-            )
+            return await asyncio.wait_for(self._generate(prompt, references, size, key), REQUEST_TIMEOUT)
         except asyncio.TimeoutError:
-            raise PhotoError(
-                "等待生图服务超时，本次没有自动重试，请稍后查看服务记录"
-            ) from None
+            raise PhotoError("等待生图服务超时，本次没有自动重试，请稍后查看服务记录") from None
         except httpx.TimeoutException:
-            raise PhotoError(
-                "等待生图服务超时，本次没有自动重试，请稍后查看服务记录"
-            ) from None
+            raise PhotoError("等待生图服务超时，本次没有自动重试，请稍后查看服务记录") from None
         except (httpx.HTTPError, httpx.InvalidURL, OSError):
-            raise PhotoError(
-                "连接图片服务中断，本次没有自动重试，请检查网络后查看服务记录"
-            ) from None
+            raise PhotoError("连接图片服务中断，本次没有自动重试，请检查网络后查看服务记录") from None
 
     async def close(self) -> None:
         try:

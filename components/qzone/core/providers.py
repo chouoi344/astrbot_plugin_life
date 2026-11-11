@@ -23,7 +23,7 @@ def _chat_provider(context, provider_id):
 def _supports_image(provider):
     modalities = _mapping(getattr(provider, "provider_config", None)).get("modalities")
     # AstrBot 4.29 treats the migration value [] as unconfigured/compatible.
-    return modalities == [] or isinstance(modalities, list) and "image" in modalities
+    return modalities == [] or (isinstance(modalities, list) and "image" in modalities)
 
 
 def _vision_problem(detail):
@@ -38,9 +38,7 @@ def _vision_problem(detail):
 
 async def _current_chat_provider_id(context, event):
     try:
-        provider_id = _provider_id(
-            await context.get_current_chat_provider_id(event.unified_msg_origin)
-        )
+        provider_id = _provider_id(await context.get_current_chat_provider_id(event.unified_msg_origin))
     except Exception:
         provider_id = ""
     if not provider_id:
@@ -59,9 +57,7 @@ async def resolve_provider_id(context, event, *, text_provider_id="", vision=Fal
     ``agent_runner.config.model.fallback_provider_ids``. No model is probed.
     """
     if not vision:
-        return _provider_id(text_provider_id) or await _current_chat_provider_id(
-            context, event
-        )
+        return _provider_id(text_provider_id) or await _current_chat_provider_id(context, event)
 
     try:
         config = _mapping(context.get_config(umo=event.unified_msg_origin))
@@ -79,9 +75,7 @@ async def resolve_provider_id(context, event, *, text_provider_id="", vision=Fal
         if provider is not None and _supports_image(provider):
             return current_id
 
-        model_config = _mapping(
-            _mapping(_mapping(config.get("agent_runner")).get("config")).get("model")
-        )
+        model_config = _mapping(_mapping(_mapping(config.get("agent_runner")).get("config")).get("model"))
         fallback_ids = model_config.get("fallback_provider_ids", [])
         if isinstance(fallback_ids, list):
             seen = {current_id}

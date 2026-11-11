@@ -6,45 +6,14 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from ...common.text import LEGACY_VOICE_PREFIX_RE, VOICE_TAG_RE, VOICE_TAGS
+from ...common.text import strip_voice_tags as _strip_voice_tags
+
 MAX_TEXT_LENGTH = 1000
-TAGS = [
-    "[笑]",
-    "[轻笑]",
-    "[咯咯笑]",
-    "[哭声]",
-    "[抽泣]",
-    "[呜咽]",
-    "[呻吟]",
-    "[哀号]",
-    "[叹气]",
-    "[惊呼]",
-    "[吸气]",
-    "[呼气]",
-    "[喘息]",
-    "[耳语]",
-    "[喊叫]",
-    "[惨叫]",
-    "[唱歌]",
-    "[哼歌]",
-    "[结巴]",
-    "[停顿]",
-    "[清嗓]",
-    "[咳嗽]",
-    "[吸鼻子]",
-    "[咂嘴]",
-    "[啧嘴]",
-    "[打哈欠]",
-    "[打喷嚏]",
-    "[打嗝]",
-    "[打饱嗝]",
-    "[吞咽]",
-    "[干呕]",
-    "[闷哼]",
-    "[冷笑]",
-    "[哼鼻子]",
-]
-_VOICE_TAG_RE = re.compile("|".join(re.escape(tag) for tag in TAGS))
-_LEGACY_PREFIX_RE = re.compile(r"\A(?:\s*【语音】)+[ \t]*")
+# One shared list for chat, photo and voice (item 24).
+TAGS = list(VOICE_TAGS)
+_VOICE_TAG_RE = VOICE_TAG_RE
+_LEGACY_PREFIX_RE = LEGACY_VOICE_PREFIX_RE
 
 _ACTION_ALIASES = {
     **{tag[1:-1]: tag for tag in TAGS},
@@ -151,8 +120,8 @@ def _is_emoji(char: str) -> bool:
 def strip_voice_tags(text: str) -> str:
     """普通回复只去已知声音标签与旧前缀，保留其他内容和排版。"""
     if not isinstance(text, str):
-        raise ValueError("请填写要处理的文字")  # noqa: TRY004 - 文字入口统一返回可展示的 ValueError。
-    return _VOICE_TAG_RE.sub("", _LEGACY_PREFIX_RE.sub("", text))
+        raise ValueError("请填写要处理的文字")
+    return _strip_voice_tags(text)
 
 
 def split_voice_tag_chunk(text: str) -> tuple[str, str]:
@@ -168,7 +137,7 @@ def split_voice_tag_chunk(text: str) -> tuple[str, str]:
 def prepare_text(text: str) -> PreparedSpeech:
     """清理一次完整回复，不拆句、不按人设字数限制截断。"""
     if not isinstance(text, str):
-        raise ValueError("请填写要念的文字")  # noqa: TRY004 - 与试听入口的 ValueError 保持一致。
+        raise ValueError("请填写要念的文字")
     text = _LEGACY_PREFIX_RE.sub("", text)
     # 沿用试听规则：链接保留可读标题，Markdown 加粗保留正文。
     text = re.sub(r"!?\[([^\[\]]+)\]\([^\n)]*\)", lambda m: m.group(1), text)
@@ -198,9 +167,7 @@ def prepare_text(text: str) -> PreparedSpeech:
     text = re.sub(r"~{2,}", "", text)
     text = text.replace("～", "~")
     text = re.sub(r"。{3,}", "……", text)
-    text = "".join(
-        c for c in text if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cf", "Cs")
-    )
+    text = "".join(c for c in text if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cf", "Cs"))
     text = re.sub(r"\s+", " ", text).strip()
 
     count = 0

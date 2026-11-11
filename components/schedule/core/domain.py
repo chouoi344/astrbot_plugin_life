@@ -11,16 +11,54 @@ from zoneinfo import ZoneInfo
 
 from astrbot.api import logger
 
-from .timeline import parse_local, project_slot_rest
-
 from .errors import describe_error
-
+from .timeline import parse_local, project_slot_rest
 
 PROMISE_MISSED_AFTER = dt.timedelta(hours=2)
 
-PROFILE_FIELDS = ("identity", "living", "routine_workday", "routine_restday", "weekly_fixed", "periodic", "vacations", "social_circle", "hobbies_places", "phone_habits")
-DEFAULT_KEYWORDS = ["今晚", "今天", "明天", "后天", "等会", "待会", "一会儿", "下班", "放学", "下课", "睡前", "起床", "记得", "答应", "约好", "说好", "一言为定", "早点睡", "别熬夜", "陪我", "一起", "改天", "周末", "下周", "提醒", "语音约定"]
-TIME_TRIGGER_RE = re.compile(r"\d{1,2}\s*[点:：]|几点|半(?:个)?小时|(?:\d+|[一二两三四五六七八九十百]+)\s*(?:分钟|小时|天)\s*[后内前]")
+PROFILE_FIELDS = (
+    "identity",
+    "living",
+    "routine_workday",
+    "routine_restday",
+    "weekly_fixed",
+    "periodic",
+    "vacations",
+    "social_circle",
+    "hobbies_places",
+    "phone_habits",
+)
+DEFAULT_KEYWORDS = [
+    "今晚",
+    "今天",
+    "明天",
+    "后天",
+    "等会",
+    "待会",
+    "一会儿",
+    "下班",
+    "放学",
+    "下课",
+    "睡前",
+    "起床",
+    "记得",
+    "答应",
+    "约好",
+    "说好",
+    "一言为定",
+    "早点睡",
+    "别熬夜",
+    "陪我",
+    "一起",
+    "改天",
+    "周末",
+    "下周",
+    "提醒",
+    "语音约定",
+]
+TIME_TRIGGER_RE = re.compile(
+    r"\d{1,2}\s*[点:：]|几点|半(?:个)?小时|(?:\d+|[一二两三四五六七八九十百]+)\s*(?:分钟|小时|天)\s*[后内前]"
+)
 DIRECT_SCHEDULE_CHANGE_RE = re.compile(
     r"(?:把|将)(?:今天|明天|后天|下午|上午|晚上|早上|中午|早晨|夜里|今晚|日程|安排|行程|计划)[^。！？\n]{0,30}(?:改成|改为|调整为|换成)"
     r"|(?:修改|调整|重排|更改|重写|改一下)[^。！？\n]{0,18}(?:日程|行程|时间表|作息|安排)"
@@ -42,9 +80,11 @@ _VOICE_MESSAGE_SEND = re.compile(r"(?:发(?:送)?|回(?:复)?|留)" + _VOICE_MES
 _VOICE_MESSAGE_SUFFIX = re.compile(r"^(?:消息|留言|条|短信|给)")
 _VOICE_MESSAGE_MANNER = re.compile(r"(?:用|通过)$")
 VOICE_CALL_TERMS = ("语音通话", "语音聊天", "打电话", "通电话", "打语音", "语音电话")
-_VOICE_CANCEL_LABEL = re.compile(r"^(?:" + "|".join(
-    re.escape(word[2:]) for word in VOICE_MESSAGE_TERMS + VOICE_CALL_TERMS if word.startswith("语音")
-) + r")")
+_VOICE_CANCEL_LABEL = re.compile(
+    r"^(?:"
+    + "|".join(re.escape(word[2:]) for word in VOICE_MESSAGE_TERMS + VOICE_CALL_TERMS if word.startswith("语音"))
+    + r")"
+)
 _VOICE_ONLY_KEYWORDS = {"语音", *VOICE_MESSAGE_TERMS, "发语音", "听语音", "录语音", "发条语音", "听一句语音"}
 _VOICE_COMMITMENT = re.compile(
     r"明晚|以后|今后|往后|下次|每(?:天|晚|周|次)|约定|承诺|答应|说好|约好|一言为定|晚点|稍后|随后|回头|有空|空了"
@@ -63,8 +103,12 @@ _CLAUSE_PARTS = re.compile(r"([。！？!?；;，,\r\n]+)")
 _SENTENCE_PARTS = re.compile(r"([。！？!?\r\n]+|(?<!\d)\.(?=\s|$))")
 _OTHER_PERSON = r"(?:家人|父母|爸爸|妈妈|爸妈|母亲|父亲|朋友|闺蜜|室友|同学|同事|老师|邻居|哥哥|姐姐|弟弟|妹妹)"
 _NEGATIVE_INTERACTION = re.compile(r"(?:不|没|别|无法|拒绝|推掉|取消|禁止|避免|谢绝|无需)[^，。；;\n]{0,7}$")
-_AFFIRMATIVE_INTERACTION = re.compile(r"(?:别忘|不要忘|不能不|不得不|不拒绝|不会拒绝|不再拒绝|没有拒绝|不用拒绝|无需拒绝|不介意|不妨|不只是|不仅|不止|不久|没多久)[^，。；;\n]{0,7}$")
-_POST_CANCELLED_INTERACTION = re.compile(r"^(?:这件事|的安排|的约定|计划|约定|请求|通话|聊天)?(?:已经|已|已被|决定|临时|暂时|最终|就|被|都|全部|还是)*(?:取消|作罢|推掉|拒绝|算了|暂停)(?:了|吧|掉)?\s*$")
+_AFFIRMATIVE_INTERACTION = re.compile(
+    r"(?:别忘|不要忘|不能不|不得不|不拒绝|不会拒绝|不再拒绝|没有拒绝|不用拒绝|无需拒绝|不介意|不妨|不只是|不仅|不止|不久|没多久)[^，。；;\n]{0,7}$"
+)
+_POST_CANCELLED_INTERACTION = re.compile(
+    r"^(?:这件事|的安排|的约定|计划|约定|请求|通话|聊天)?(?:已经|已|已被|决定|临时|暂时|最终|就|被|都|全部|还是)*(?:取消|作罢|推掉|拒绝|算了|暂停)(?:了|吧|掉)?\s*$"
+)
 _VIDEO_CONTENT_ACTION = re.compile(
     r"(?:观看|看|刷)(?:手机上的|手机上|手机里|屏幕上|网上|你发的|你分享的|这段|那段|一段|一个|几个|过|了|短|小|的)*$"
     r"|(?:分享|转发|录|拍|剪辑|推荐|(?<!出)发)(?:给你|给主人|给用户|一段|一个|这段|那段|短|小|的|了)*$"
@@ -79,10 +123,16 @@ def has_change_trigger(user, reply, keywords=None):
     # New voice promises must work with already-saved keyword lists. Generic
     # voice words alone describe the delivery medium, not a changed schedule.
     voice_promise = bool(_VOICE_CONTENT.search(text) and _VOICE_COMMITMENT.search(text))
-    return (any(str(word).strip() not in _VOICE_ONLY_KEYWORDS and str(word).strip()
-                and str(word).strip() in text for word in choices)
-            or bool(TIME_TRIGGER_RE.search(text)) or bool(DIRECT_SCHEDULE_CHANGE_RE.search(text))
-            or bool(MOOD_TRIGGER_RE.search(text)) or voice_promise)
+    return (
+        any(
+            str(word).strip() not in _VOICE_ONLY_KEYWORDS and str(word).strip() and str(word).strip() in text
+            for word in choices
+        )
+        or bool(TIME_TRIGGER_RE.search(text))
+        or bool(DIRECT_SCHEDULE_CHANGE_RE.search(text))
+        or bool(MOOD_TRIGGER_RE.search(text))
+        or voice_promise
+    )
 
 
 def effective_forbidden_interactions(forbidden):
@@ -137,7 +187,7 @@ def _explicit_other_party(clause, match_start, references):
     links = list(re.finditer(r"和|跟|与|陪|给|同|找", prefix))
     if not links:
         return False
-    receiver = prefix[links[-1].end():].strip()
+    receiver = prefix[links[-1].end() :].strip()
     receiver = re.sub(r"(?:一起|一块|一同|进行|在线|连线|语音|线下|打|玩|开|去|的)+$", "", receiver).strip()
     if not receiver or len(receiver) > 18:
         return False
@@ -166,27 +216,33 @@ def _clause_has_forbidden(clause, forbidden, user_aliases=(), inherited_user=Fal
             aliases += tuple("找" + name for name in ("主人", "用户", *(user_aliases or ())))
         for alias in aliases:
             for match in re.finditer(re.escape(alias), clause, re.IGNORECASE):
-                prefix = clause[max(0, match.start() - 12):match.start()]
-                suffix = clause[match.end():].strip()
+                prefix = clause[max(0, match.start() - 12) : match.start()]
+                suffix = clause[match.end() :].strip()
                 voice_message = False
                 if voice_related:
                     if alias == "语音" and re.match(r"^(?:输入|识别|转文字|转写)", suffix):
                         continue
                     voice_message = alias not in VOICE_CALL_TERMS and bool(
                         alias in VOICE_MESSAGE_TERMS
-                        or any(clause[match.start():].startswith(word) for word in VOICE_MESSAGE_TERMS)
-                        or _VOICE_MESSAGE_ACTION.search(clause[:match.start()])
+                        or any(clause[match.start() :].startswith(word) for word in VOICE_MESSAGE_TERMS)
+                        or _VOICE_MESSAGE_ACTION.search(clause[: match.start()])
                         or _VOICE_MESSAGE_SUFFIX.match(suffix)
-                        or _VOICE_MESSAGE_MANNER.search(prefix) and re.match(r"^(?:说|告诉|回复|回你|发给)", suffix)
+                        or (_VOICE_MESSAGE_MANNER.search(prefix) and re.match(r"^(?:说|告诉|回复|回你|发给)", suffix))
                     )
                     if voice_message and not RESTRICT_VOICE_MESSAGES:
                         continue
                     # A receiver after the voice noun is common in messages:
                     # '发条语音给妈妈，你先休息' must keep its third-party target.
                     receiver = re.match(r"^(?:消息|留言|条|短信)?给([^，。！？；;\n]+)", suffix)
-                    if receiver and not references.search(receiver.group(1)) and not references.search(clause[:match.start()]):
+                    if (
+                        receiver
+                        and not references.search(receiver.group(1))
+                        and not references.search(clause[: match.start()])
+                    ):
                         continue
-                cancelled_suffix = _VOICE_CANCEL_LABEL.sub("", suffix, count=1) if voice_related and alias == "语音" else suffix
+                cancelled_suffix = (
+                    _VOICE_CANCEL_LABEL.sub("", suffix, count=1) if voice_related and alias == "语音" else suffix
+                )
                 if _POST_CANCELLED_INTERACTION.fullmatch(cancelled_suffix):
                     continue
                 self_action = re.search(r"(?:自己|独自|一个人|单独)[^，。；;\n]{0,5}$", prefix)
@@ -196,7 +252,11 @@ def _clause_has_forbidden(clause, forbidden, user_aliases=(), inherited_user=Fal
                     user_receiver = re.search(r"给(?:" + references.pattern + r")", suffix)
                     if not (voice_message and (_VOICE_MESSAGE_SEND.search(prefix) or user_receiver)):
                         continue
-                if term in {"视频通话", "视频"} and (_VIDEO_CONTENT_ACTION.search(prefix) or re.search(r"(?:聊|谈)(?:一聊|到|了|关于)?$", prefix) or alias == "视频" and prefix.endswith("短")):
+                if term in {"视频通话", "视频"} and (
+                    _VIDEO_CONTENT_ACTION.search(prefix)
+                    or re.search(r"(?:聊|谈)(?:一聊|到|了|关于)?$", prefix)
+                    or (alias == "视频" and prefix.endswith("短"))
+                ):
                     continue
                 if _explicit_other_party(clause, match.start(), references):
                     continue
@@ -238,7 +298,10 @@ def contains_forbidden(text, forbidden, user_aliases=()):
                 return contains_forbidden(payload, forbidden, user_aliases)
         except (ValueError, TypeError):
             pass
-    return any(_clause_has_forbidden(clause, forbidden, user_aliases, inherited) for clause, _, inherited in _interaction_clauses(text, user_aliases))
+    return any(
+        _clause_has_forbidden(clause, forbidden, user_aliases, inherited)
+        for clause, _, inherited in _interaction_clauses(text, user_aliases)
+    )
 
 
 def sanitize_forbidden_text(text, forbidden, user_aliases=()):
@@ -300,7 +363,18 @@ class PromiseManager:
         reason = str(item.get("note", "") or "")
         for change in reversed(changes or []):
             conflicts = change.get("promise_conflicts", [])
-            matched = next((conflict for conflict in conflicts if isinstance(conflict, dict) and str(conflict.get("id")) == str(item.get("id"))), None) if isinstance(conflicts, list) else None
+            matched = (
+                next(
+                    (
+                        conflict
+                        for conflict in conflicts
+                        if isinstance(conflict, dict) and str(conflict.get("id")) == str(item.get("id"))
+                    ),
+                    None,
+                )
+                if isinstance(conflicts, list)
+                else None
+            )
             if matched:
                 return str(matched.get("note", "") or "")
             explanation = change.get("summary") or change.get("description") or change.get("reason") or ""
@@ -329,7 +403,7 @@ class PromiseManager:
                 due = parse_local(item["due"], self.tz) if item.get("due") else None
                 created = parse_local(item["created_at"], self.tz)
             except (KeyError, ValueError, TypeError):
-                logger.warning("约定日期损坏，跳过：%s", item.get("id", ""))
+                logger.warning("[生活日程] 约定日期损坏，跳过：%s", item.get("id", ""))
                 continue
             if due is not None and now >= due + PROMISE_MISSED_AFTER:
                 item["status"] = "missed"
@@ -397,7 +471,11 @@ class PromiseManager:
                 continue
             content = str(raw.get("content", "") or "").strip()
             kind = raw.get("type", "tell")
-            if not content or kind not in {"tell", "do", "avoid"} or contains_forbidden(content, self.forbidden, self.user_aliases):
+            if (
+                not content
+                or kind not in {"tell", "do", "avoid"}
+                or contains_forbidden(content, self.forbidden, self.user_aliases)
+            ):
                 continue
             due = None
             if raw.get("due"):
@@ -405,9 +483,20 @@ class PromiseManager:
                     due = parse_local(raw["due"], self.tz).isoformat()
                 except (ValueError, TypeError):
                     continue
-            if any(item.get("status") == "pending" and item.get("content") == content and item.get("due") == due for item in values):
+            if any(
+                item.get("status") == "pending" and item.get("content") == content and item.get("due") == due
+                for item in values
+            ):
                 continue
-            item = {"id": "promise-" + uuid.uuid4().hex, "content": content, "created_at": now.isoformat(), "due": due, "type": kind, "status": "pending", "note": ""}
+            item = {
+                "id": "promise-" + uuid.uuid4().hex,
+                "content": content,
+                "created_at": now.isoformat(),
+                "due": due,
+                "type": kind,
+                "status": "pending",
+                "note": "",
+            }
             values.append(item)
             changed.append(copy.deepcopy(item))
         for field, status in (("fulfilled_promise_ids", "fulfilled"), ("cancelled_promise_ids", "cancelled")):
@@ -529,14 +618,19 @@ class EventManager:
                 item["status"] = self._status(item, today)
                 results.append(copy.deepcopy(item))
             except (KeyError, ValueError, TypeError) as exc:
-                logger.warning("长期事件数据无效，跳过：%s", describe_error(exc))
+                logger.warning("[生活日程] 长期事件数据无效，跳过：%s", describe_error(exc))
         if before_ai != ai:
             self._save(ai)
         return results
 
     def relevant(self, today):
         today = _date(today)
-        return [item for item in self.all(today) if item["status"] == "active" or item["status"] == "upcoming" and _date(item["start_date"]) <= today + dt.timedelta(days=3)]
+        return [
+            item
+            for item in self.all(today)
+            if item["status"] == "active"
+            or (item["status"] == "upcoming" and _date(item["start_date"]) <= today + dt.timedelta(days=3))
+        ]
 
     def active(self, today):
         return [item for item in self.all(today) if item["status"] == "active"]
@@ -548,14 +642,26 @@ class EventManager:
         description = str(payload.get("description", "") or "").strip()
         if not title:
             raise ValueError("事件缺少标题")
-        if contains_forbidden({"title": title, "description": description}, self.config.get("forbidden_interactions", []), user_aliases_from_config(self.config)):
+        if contains_forbidden(
+            {"title": title, "description": description},
+            self.config.get("forbidden_interactions", []),
+            user_aliases_from_config(self.config),
+        ):
             raise ValueError("事件包含受限互动")
         start, end = _date(payload.get("start_date", today)), _date(payload.get("end_date", today))
         if end < start:
             raise ValueError("事件结束日期早于开始日期")
         if not 1 <= (end - start).days + 1 <= 7:
             raise ValueError("AI事件应持续1至7天")
-        return {"id": "event-" + uuid.uuid4().hex, "title": title, "start_date": start.isoformat(), "end_date": end.isoformat(), "description": description, "source": "ai", "status": "upcoming" if start > today else "done" if end < today else "active"}
+        return {
+            "id": "event-" + uuid.uuid4().hex,
+            "title": title,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "description": description,
+            "source": "ai",
+            "status": "upcoming" if start > today else "done" if end < today else "active",
+        }
 
     def add(self, payload, today):
         today = _date(today)
@@ -565,7 +671,9 @@ class EventManager:
         for existing in ai:
             if existing.get("status") in {"cancelled", "done"}:
                 continue
-            if _date(existing["start_date"]) <= _date(item["end_date"]) and _date(existing["end_date"]) >= _date(item["start_date"]):
+            if _date(existing["start_date"]) <= _date(item["end_date"]) and _date(existing["end_date"]) >= _date(
+                item["start_date"]
+            ):
                 raise ValueError("同一时间最多有一个AI长期事件")
         ai.append(item)
         self._save(ai)
@@ -582,7 +690,9 @@ class EventManager:
         for update in updates:
             if not isinstance(update, dict):
                 continue
-            item = next((value for value in ai if value.get("id") == update.get("id") and value.get("status") == "active"), None)
+            item = next(
+                (value for value in ai if value.get("id") == update.get("id") and value.get("status") == "active"), None
+            )
             if item is None:
                 continue
             candidate = copy.deepcopy(item)
@@ -602,11 +712,19 @@ class EventManager:
                     continue
             if update.get("description"):
                 description = str(update["description"])
-                if contains_forbidden(description, self.config.get("forbidden_interactions", []), user_aliases_from_config(self.config)):
+                if contains_forbidden(
+                    description, self.config.get("forbidden_interactions", []), user_aliases_from_config(self.config)
+                ):
                     continue
                 candidate["description"] = description
             if candidate.get("status") in {"upcoming", "active"}:
-                overlap = any(other.get("id") != candidate["id"] and other.get("status") not in {"done", "cancelled"} and _date(other["start_date"]) <= _date(candidate["end_date"]) and _date(other["end_date"]) >= _date(candidate["start_date"]) for other in ai)
+                overlap = any(
+                    other.get("id") != candidate["id"]
+                    and other.get("status") not in {"done", "cancelled"}
+                    and _date(other["start_date"]) <= _date(candidate["end_date"])
+                    and _date(other["end_date"]) >= _date(candidate["start_date"])
+                    for other in ai
+                )
                 if overlap:
                     continue
             if candidate != item:
@@ -622,8 +740,9 @@ class EventManager:
                     changed.append(self.add(addition, today))
                     break
                 except (ValueError, TypeError) as exc:
-                    logger.info("忽略无效AI长期事件，继续保留其余事件：%s", describe_error(exc))
+                    logger.info("[生活日程] 忽略无效AI长期事件，继续保留其余事件：%s", describe_error(exc))
         return changed
+
 
 def compute_routine(profile, today, tz, workday=True, jitter_minutes=20, yesterday=None, rng=None):
     """Resolve explicit wake/sleep clocks, then apply jitter and actual sleep debt."""
@@ -633,7 +752,7 @@ def compute_routine(profile, today, tz, workday=True, jitter_minutes=20, yesterd
 
     def extract(verbs, default):
         for match in re.finditer(clock, text):
-            tail = text[match.end():match.end() + 8]
+            tail = text[match.end() : match.end() + 8]
             if re.search(verbs, tail):
                 minute = 30 if match.group("half") else int(match.group("minute") or match.group("cnminute") or 0)
                 return int(match.group("hour")) * 60 + minute

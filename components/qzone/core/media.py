@@ -7,7 +7,9 @@ import io
 from pathlib import Path
 
 import aiohttp
-from PIL import Image as PILImage, ImageOps
+from PIL import Image as PILImage
+from PIL import ImageOps
+
 from .dialogue import RequestProblem
 
 MAX_BYTES = 20 * 1024 * 1024
@@ -26,16 +28,9 @@ async def collect_images(event, cache_dir: Path, limit=9) -> list[str]:
     for segment in chain:
         if component_type(segment) != "reply":
             continue
-        quoted = list(
-            (segment.get("chain") if isinstance(segment, dict) else getattr(segment, "chain", None))
-            or []
-        )
+        quoted = list((segment.get("chain") if isinstance(segment, dict) else getattr(segment, "chain", None)) or [])
         if not quoted:
-            reply_id = (
-                segment.get("data", {}).get("id")
-                if isinstance(segment, dict)
-                else getattr(segment, "id", None)
-            )
+            reply_id = segment.get("data", {}).get("id") if isinstance(segment, dict) else getattr(segment, "id", None)
             if reply_id and getattr(event, "bot", None):
                 raw = await event.bot.get_msg(message_id=int(reply_id))
                 quoted = raw.get("message", []) if isinstance(raw, dict) else []
@@ -50,9 +45,7 @@ async def collect_images(event, cache_dir: Path, limit=9) -> list[str]:
             {"result": "本条消息及引用内容中都没有照片", "next": "需要用户提供或引用要发布的照片"},
         )
     if len(selected) > limit:
-        raise RequestProblem(
-            "too_many_photos", {"result": "照片数量超过单条说说限制", "max_images": limit}
-        )
+        raise RequestProblem("too_many_photos", {"result": "照片数量超过单条说说限制", "max_images": limit})
     cache_dir.mkdir(parents=True, exist_ok=True)
     result = []
     for segment in selected:
@@ -64,9 +57,7 @@ async def collect_images(event, cache_dir: Path, limit=9) -> list[str]:
             if not reference and hasattr(segment, "convert_to_file_path"):
                 reference = await segment.convert_to_file_path()
         if not reference:
-            raise RequestProblem(
-                "photo_unavailable", {"result": "引用的照片当前无法读取，需要用户重新提供"}
-            )
+            raise RequestProblem("photo_unavailable", {"result": "引用的照片当前无法读取，需要用户重新提供"})
         image = await read_image(str(reference))
         digest = hashlib.sha256(image).hexdigest()
         target = cache_dir / f"{digest}.png"
@@ -82,8 +73,8 @@ async def read_image(reference: str) -> bytes:
             raise ValueError("图片过大")
         data = base64.b64decode(reference[9:], validate=True)
     elif reference.startswith(("https://", "http://")):
-        from urllib.parse import urlparse
         import ipaddress
+        from urllib.parse import urlparse
 
         parsed = urlparse(reference)
         if parsed.hostname in ("localhost", None) or parsed.username or parsed.password:

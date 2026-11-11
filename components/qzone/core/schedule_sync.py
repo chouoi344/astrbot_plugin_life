@@ -12,7 +12,6 @@ import math
 
 from .integrations import DependencyUnavailable, schedule_generating, schedule_peer
 
-
 _KEY = "life_snapshot:v1"
 _POLL_SECONDS = 60
 _ERROR_RETRY_SECONDS = 300
@@ -54,7 +53,10 @@ class LifeSnapshots:
     def _attach(self, peer):
         engine = peer.engine
         source = (
-            id(peer), id(engine), engine.setup.selected_id, engine.setup.state.get("token"),
+            id(peer),
+            id(engine),
+            engine.setup.selected_id,
+            engine.setup.state.get("token"),
             engine.window()[0],
         )
         if source != self._source:
@@ -150,8 +152,7 @@ class LifeSnapshots:
                 self.store.set_value("schedule_sync_error", "")
                 current = self._current(peer, self.now().timestamp())
                 if current and (
-                    generating_before
-                    or (life.get("meta") or {}).get("qzone_generation_in_progress") is True
+                    generating_before or (life.get("meta") or {}).get("qzone_generation_in_progress") is True
                 ):
                     current["meta"]["qzone_generation_in_progress"] = True
                 return current

@@ -62,7 +62,9 @@ class WardrobeManager:
                     "description": description,
                     "category": item.get("category") if item.get("category") in CATEGORIES else "外出",
                     "seasons": _seasons(item.get("seasons")),
-                    "image_upload": [value for value in item.get("image_upload", []) if isinstance(value, str)] if isinstance(item.get("image_upload"), list) else [],
+                    "image_upload": [value for value in item.get("image_upload", []) if isinstance(value, str)]
+                    if isinstance(item.get("image_upload"), list)
+                    else [],
                     "image_processed_hash": str(item.get("image_processed_hash", "") or ""),
                 }
             )
@@ -185,7 +187,11 @@ class WardrobeManager:
                 if entry["category"] == category and entry["description"] and temperature_safe(entry)
             ]
             seasonal = [entry for entry in candidates if season in entry["seasons"]]
-            fresh = [entry for entry in seasonal if entry["id"] not in recent_ids and description_key(entry["description"]) not in recent_descriptions]
+            fresh = [
+                entry
+                for entry in seasonal
+                if entry["id"] not in recent_ids and description_key(entry["description"]) not in recent_descriptions
+            ]
             pool = fresh or seasonal or candidates
             if pool:
                 result[outfit_type] = dict(random.choice(pool), temporary=False)

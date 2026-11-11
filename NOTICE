@@ -1,7 +1,7 @@
 拟人生活集成五个原组件。原许可文本和署名随包保存。
 
-- 生活日程（yav434649-prog）：components/schedule/LICENSE
-- 自然照片（臭屁）：components/photo/LICENSE
-- 自然语音（muyouzhi6、臭屁）：components/voice/LICENSE
-- 自然私聊内的主动消息传输及其第三方说明：components/chat/proactive/LICENSE 和 components/chat/proactive/THIRD_PARTY.md
+- 生活日程（yav434649-prog）：components/schedule/LICENSE；图片收集等改编自 muyouzhi6/astrbot_plugin_life_scheduler（MIT），见 components/schedule/THIRD_PARTY_NOTICES.md。
+- 自然照片（臭屁）：components/photo/LICENSE；来源与署名见 components/photo/NOTICE.md。
+- 自然语音（muyouzhi6、臭屁）：components/voice/LICENSE（MIT）。
+- 自然私聊（含主动消息）：v1.4.0 起完全自行实现，只借鉴了 Pancakes-Labs/astrbot_plugin_proactive_chat 的设计思路（随机间隔、免打扰时段、未回复上限），不含其代码，随整包使用 GPL-3.0-or-later。
 - QQ 空间（臭屁）：components/qzone/LICENSE；QQ 空间协议源自 Zhalslar/astrbot_plugin_qzone v3.1.3，原 GPL-3.0 声明见 components/qzone/THIRD_PARTY_NOTICES.md。

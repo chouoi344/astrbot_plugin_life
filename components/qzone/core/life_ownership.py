@@ -12,7 +12,6 @@ import json
 import math
 from datetime import date, datetime, timedelta
 
-
 _KEY = "life_cache_ownership:v1"
 _KEEP = 32
 
@@ -67,9 +66,7 @@ def _business_day_to_wait_for(state, now):
     if isinstance(valid_until, (int, float)) and math.isfinite(valid_until) and valid_until > 0:
         try:
             refresh = datetime.fromtimestamp(valid_until, tz=now.tzinfo)
-            boundary = now.replace(
-                hour=refresh.hour, minute=refresh.minute, second=0, microsecond=0
-            )
+            boundary = now.replace(hour=refresh.hour, minute=refresh.minute, second=0, microsecond=0)
             return (now.date() - timedelta(days=1) if now < boundary else now.date()).isoformat()
         except (ValueError, OverflowError, OSError):
             pass

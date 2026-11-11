@@ -107,3 +107,4 @@ button,a,input,textarea,select,summary{outline-offset:3px}button:focus-visible,i
   .dashboard-fact dd{font-size:13px}
   .confirmation-message{padding:15px 19px}
 }
+.dashboard-subheading { margin: 12px 0 4px; font-size: 14px; font-weight: 600; }

@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 
@@ -162,17 +163,13 @@ def _extract_images_from_structure(
 
     if isinstance(value, (list, tuple, set)):
         for item in value:
-            _extract_images_from_structure(
-                item, image_segs, image_refs, seen=seen, skip_replies=skip_replies
-            )
+            _extract_images_from_structure(item, image_segs, image_refs, seen=seen, skip_replies=skip_replies)
         return
 
     for attr in ("chain", "message", "messages", "content", "elements", "segments"):
         nested = _safe_getattr(value, attr, None)
         if nested is not None and nested is not value:
-            _extract_images_from_structure(
-                nested, image_segs, image_refs, seen=seen, skip_replies=skip_replies
-            )
+            _extract_images_from_structure(nested, image_segs, image_refs, seen=seen, skip_replies=skip_replies)
 
 
 def _resolve_call_action_candidates(
@@ -304,9 +301,7 @@ def _build_image_resolve_actions(
         group_id = int(group_id)
     if group_id:
         for candidate in candidates:
-            actions.append(
-                ("get_group_file_url", {"group_id": group_id, "file_id": candidate})
-            )
+            actions.append(("get_group_file_url", {"group_id": group_id, "file_id": candidate}))
     for candidate in candidates:
         actions.append(("get_private_file_url", {"file_id": candidate}))
     return actions
@@ -328,11 +323,7 @@ async def _resolve_image_ref(event: AstrMessageEvent, image_ref: str) -> str:
 
 
 def _image_identity(seg: Image) -> str:
-    direct = _normalize_image_ref(
-        getattr(seg, "url", None)
-        or getattr(seg, "file", None)
-        or getattr(seg, "path", None)
-    )
+    direct = _normalize_image_ref(getattr(seg, "url", None) or getattr(seg, "file", None) or getattr(seg, "path", None))
     if direct:
         return direct
     return f"obj:{id(seg)}"
@@ -368,9 +359,7 @@ async def _build_images_from_refs(
     return images
 
 
-async def get_raw_images_from_event(
-    event: AstrMessageEvent, *, skip_replies: bool = False
-) -> list[Image]:
+async def get_raw_images_from_event(event: AstrMessageEvent, *, skip_replies: bool = False) -> list[Image]:
     """Recover image references from the untouched platform payload.
 
     Some plugins replace an incoming OneBot image component with a temporary
@@ -388,9 +377,7 @@ async def get_raw_images_from_event(
     image_segs: list[Image] = []
     image_refs: list[str] = []
     if raw_message is not None:
-        _extract_images_from_structure(
-            raw_message, image_segs, image_refs, skip_replies=skip_replies
-        )
+        _extract_images_from_structure(raw_message, image_segs, image_refs, skip_replies=skip_replies)
     if image_refs:
         _append_unique_images(
             image_segs,
@@ -402,9 +389,7 @@ async def get_raw_images_from_event(
     # gives us the original file id/URL before the temp file is cleaned up.
     def _segment_has_usable_image(seg: Image) -> bool:
         ref = _normalize_image_ref(
-            getattr(seg, "url", None)
-            or getattr(seg, "file", None)
-            or getattr(seg, "path", None)
+            getattr(seg, "url", None) or getattr(seg, "file", None) or getattr(seg, "path", None)
         )
         if not ref:
             return False
@@ -433,9 +418,7 @@ async def get_raw_images_from_event(
             payload = await _call_action_compat(event, "get_msg", params_list)
             data = _unwrap_action_data(payload)
             fetched_refs: list[str] = []
-            _extract_images_from_structure(
-                data, image_segs, fetched_refs, skip_replies=skip_replies
-            )
+            _extract_images_from_structure(data, image_segs, fetched_refs, skip_replies=skip_replies)
             if fetched_refs:
                 _append_unique_images(
                     image_segs,
@@ -465,12 +448,8 @@ async def _extract_reply_images(
 
     if _astrbot_extract_quoted_message_images is not None:
         try:
-            refs = await _astrbot_extract_quoted_message_images(
-                event, reply_component=reply_seg
-            )
-            _append_unique_images(
-                image_segs, await _build_images_from_refs(event, refs)
-            )
+            refs = await _astrbot_extract_quoted_message_images(event, reply_component=reply_seg)
+            _append_unique_images(image_segs, await _build_images_from_refs(event, refs))
         except Exception as e:
             logger.debug(
                 "[get_images] astrbot quoted_message_parser failed: reply_id=%s err=%s",
@@ -517,16 +496,12 @@ async def collect_images(
     current = [segment for segment in chain if isinstance(segment, Image)]
     has_raw_images = False
     if not current:
-        raw = _safe_getattr(
-            _safe_getattr(event, "message_obj", None), "raw_message", None
-        )
+        raw = _safe_getattr(_safe_getattr(event, "message_obj", None), "raw_message", None)
         if raw is None:
             raw = _safe_getattr(event, "raw_message", None)
         raw_images: list[Image] = []
         raw_refs: list[str] = []
-        _extract_images_from_structure(
-            raw, raw_images, raw_refs, skip_replies=skip_replies
-        )
+        _extract_images_from_structure(raw, raw_images, raw_refs, skip_replies=skip_replies)
         has_raw_images = bool(raw_images or raw_refs)
 
     has_current = bool(current or has_raw_images)
@@ -537,22 +512,16 @@ async def collect_images(
     if not only_current:
         for segment in chain:
             if isinstance(segment, Reply):
-                _append_unique_images(
-                    images, await _extract_reply_images(event, segment)
-                )
+                _append_unique_images(images, await _extract_reply_images(event, segment))
     _append_unique_images(images, current)
     needs_raw = not images or has_raw_images
     for segment in current:
         source = _normalize_image_ref(segment.url or segment.file or segment.path)
-        if not source or (
-            source.startswith("file:///") and not os.path.exists(_file_uri_path(source))
-        ):
+        if not source or (source.startswith("file:///") and not os.path.exists(_file_uri_path(source))):
             needs_raw = True
             break
     if needs_raw:
-        _append_unique_images(
-            images, await get_raw_images_from_event(event, skip_replies=only_current)
-        )
+        _append_unique_images(images, await get_raw_images_from_event(event, skip_replies=only_current))
 
     resolved_images: list[Image] = []
     for segment in images:
@@ -563,9 +532,7 @@ async def collect_images(
             continue
         if os.path.isabs(source) and not os.path.exists(source):
             continue
-        _append_unique_images(
-            resolved_images, await _build_images_from_refs(event, [source])
-        )
+        _append_unique_images(resolved_images, await _build_images_from_refs(event, [source]))
     if only_current and not resolved_images:
         raise PhotoError("参考图片读取失败，请重新上传或发送。")
     return resolved_images

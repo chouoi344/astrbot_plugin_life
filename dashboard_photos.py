@@ -56,9 +56,7 @@ def _photo_rows(photo, persona_id):
         if not owner or owner.get("persona_id") != persona_id or not owner.get("conversation_id"):
             continue
         scope = PhotoScope(**owner)
-        groups.setdefault(scope, {})[task["id"]] = (
-            task, task.get("dashboard_outputs", [])
-        )
+        groups.setdefault(scope, {})[task["id"]] = (task, task.get("dashboard_outputs", []))
 
     # Older task records lack ownership. A confirmed photo context can prove
     # the exact group's owner and the files that were actually sent.
@@ -101,10 +99,15 @@ async def _available_scopes(plugin, photo, persona_id):
         if scope in groups:
             selected[_scope_id(scope)] = (scope, groups[scope])
     priorities = (plugin.config["chat"].get("target_session"), plugin.config["schedule"].get("default_reference_umo"))
-    return dict(sorted(selected.items(), key=lambda item: (
-        priorities.index(item[1][0].umo) if item[1][0].umo in priorities else len(priorities),
-        item[0],
-    )))
+    return dict(
+        sorted(
+            selected.items(),
+            key=lambda item: (
+                priorities.index(item[1][0].umo) if item[1][0].umo in priorities else len(priorities),
+                item[0],
+            ),
+        )
+    )
 
 
 def _session_label(plugin, scope):
@@ -138,19 +141,21 @@ def _photo_items(photo, scope_id, tasks):
                     delivery = "sent"
                 elif status == "partial" or (status == "unknown" and index > sent + 1):
                     delivery = "not_sent"
-            items.append({
-                "id": item_id,
-                "action": task["action"],
-                "mode": task.get("dashboard_mode"),
-                "delivery_status": delivery,
-                "task_delivery_status": status,
-                "generation_status": (
-                    "generated" if filename else "pending" if status in {"queued", "generating"} else "unknown"
-                ),
-                "sent_count": sent,
-                "created_at": task.get("dashboard_created_at"),
-                "image_id": item_id if path else None,
-            })
+            items.append(
+                {
+                    "id": item_id,
+                    "action": task["action"],
+                    "mode": task.get("dashboard_mode"),
+                    "delivery_status": delivery,
+                    "task_delivery_status": status,
+                    "generation_status": (
+                        "generated" if filename else "pending" if status in {"queued", "generating"} else "unknown"
+                    ),
+                    "sent_count": sent,
+                    "created_at": task.get("dashboard_created_at"),
+                    "image_id": item_id if path else None,
+                }
+            )
             if len(items) >= _LIST_LIMIT:
                 return items, paths
     return items, paths
@@ -209,9 +214,7 @@ class PhotoHistory:
                 item["created_at"] = datetime.fromisoformat(created_at).astimezone(zone).isoformat()
         return {
             "scope_id": scope_id,
-            "scopes": [
-                {"id": identifier, "name": label} for identifier, label in labels.items()
-            ],
+            "scopes": [{"id": identifier, "name": label} for identifier, label in labels.items()],
             "items": items,
         }
 
@@ -230,4 +233,3 @@ class PhotoHistory:
         scope = scopes[scope_id][0]
         current = await self.plugin.context.conversation_manager.get_curr_conversation_id(scope.umo)
         return result if current == scope.conversation_id else None
-

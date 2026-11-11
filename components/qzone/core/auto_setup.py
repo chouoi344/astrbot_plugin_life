@@ -11,7 +11,6 @@ import inspect
 
 from .dialogue import RequestProblem
 
-
 _LOGIN_TIMEOUT = 8
 
 
@@ -88,9 +87,7 @@ def connected_qq(client):
     if not connections:
         return ""
     if len(connections) != 1:
-        raise _problem(
-            "qq_account_ambiguous", "同一QQ连接中有多个机器人账号，请在后台为本插件保留一个QQ账号"
-        )
+        raise _problem("qq_account_ambiguous", "同一QQ连接中有多个机器人账号，请在后台为本插件保留一个QQ账号")
     identity = _qq(next(iter(connections)))
     if not identity:
         raise _problem("qq_connection_waiting", "QQ连接身份尚未就绪，恢复后会自动准备空间")
@@ -128,7 +125,12 @@ async def _identity(platform):
 
 
 async def discover_session(
-    context, event_factory, *, previous=None, hint=None, allow_account_refresh=False,
+    context,
+    event_factory,
+    *,
+    previous=None,
+    hint=None,
+    allow_account_refresh=False,
     before_identity=None,
 ):
     """Return an observed session; the caller still verifies its space Cookie.
@@ -160,10 +162,7 @@ async def discover_session(
         hint_bot = _qq(hint.get_self_id())
         if len(hint_origin) != 3 or not hint_origin[0] or not hint_bot:
             raise _problem("qq_connection_waiting", "QQ会话信息尚未就绪，会在连接恢复后自动准备")
-        if previous and (
-            hint_origin[0] != platform_id
-            or (hint_bot != expected_bot and not allow_account_refresh)
-        ):
+        if previous and (hint_origin[0] != platform_id or (hint_bot != expected_bot and not allow_account_refresh)):
             raise _problem("account_changed", "当前QQ账号与原空间账号不同，已暂停空间操作")
         platform_id = platform_id or hint_origin[0]
         expected_bot = expected_bot or hint_bot
@@ -179,9 +178,7 @@ async def discover_session(
         # query. Do not drop a candidate and assume the remaining account is safe.
         for key, _ in items:
             await before_identity(f"{key}:FriendMessage:{admin}")
-    identities = await asyncio.gather(
-        *(_identity(platform) for _, platform in items), return_exceptions=True
-    )
+    identities = await asyncio.gather(*(_identity(platform) for _, platform in items), return_exceptions=True)
     for identity in identities:
         if isinstance(identity, BaseException):
             raise identity
@@ -195,8 +192,15 @@ async def discover_session(
         raise _problem("account_changed", "当前消息与QQ登录账号不同，已暂停此次空间操作")
     if expected_bot and bot_id != expected_bot and not allow_account_refresh:
         raise _problem("account_changed", "QQ连接账号已改变，已暂停原空间操作")
-    event = await _await(event_factory(context, {
-        "umo": f"{selected}:FriendMessage:{admin}", "bot_id": bot_id,
-        "admin_id": admin, "admin_name": "管理员",
-    }))
+    event = await _await(
+        event_factory(
+            context,
+            {
+                "umo": f"{selected}:FriendMessage:{admin}",
+                "bot_id": bot_id,
+                "admin_id": admin,
+                "admin_name": "管理员",
+            },
+        )
+    )
     return event

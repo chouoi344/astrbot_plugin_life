@@ -1,11 +1,14 @@
 """插件设置只在加载入口校验，不读取旧 MiniMax 的配置。"""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from yarl import URL
 
-DEFAULT_BASE_URL = "https://api.breeze.blue"
+DEFAULT_BASE_URL = "https://choupi.tech"
+# Default before v1.4.2; cache keys for it stay unchanged so old audio is still reused.
+LEGACY_BASE_URL = "https://api.breeze.blue"
 
 
 def _normalize_base_url(value: str) -> str:
@@ -23,9 +26,7 @@ def _normalize_base_url(value: str) -> str:
         ):
             raise ValueError
     except ValueError:
-        raise ValueError(
-            "语音服务 URL 需要是有效的 HTTP 或 HTTPS 地址，地址中不能带账号密码、参数或片段"
-        ) from None
+        raise ValueError("语音服务 URL 需要是有效的 HTTP 或 HTTPS 地址，地址中不能带账号密码、参数或片段") from None
     path = url.raw_path.rstrip("/").removesuffix("/v1").rstrip("/")
     return str(url.with_path(path, encoded=True))
 

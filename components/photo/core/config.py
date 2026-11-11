@@ -1,6 +1,10 @@
 """Validate native settings once, without rewriting uploaded file values."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from .sizes import SizeSetting
+
+DEFAULT_BASE_URL = "https://choupi.tech/v1/images/generations"
 
 
 @dataclass(frozen=True)
@@ -8,9 +12,10 @@ class Settings:
     generate_enabled: bool = True
     edit_enabled: bool = True
     selfie_enabled: bool = True
-    base_url: str = ""
+    base_url: str = DEFAULT_BASE_URL
     api_keys: tuple[str, ...] = ()
     model: str = ""
+    image_size: SizeSetting = field(default_factory=SizeSetting)
 
     @classmethod
     def from_config(cls, config):
@@ -29,10 +34,13 @@ class Settings:
             if not isinstance(value, str):
                 raise ValueError("服务地址和模型名称应填写文字")
             text[key] = value.strip()
+        # An empty address (older configs) falls back to the built-in service.
+        text["base_url"] = text["base_url"] or DEFAULT_BASE_URL
         return cls(
             **flags,
             api_keys=tuple(k.strip() for k in keys if k.strip()),
             **text,
+            image_size=SizeSetting.parse(config.get("image_size", "2K")),
         )
 
     @property
@@ -44,9 +52,7 @@ class Settings:
         return self.generate_enabled or self.edit_enabled or self.selfie_enabled
 
 
-def validate_request(
-    user_prompt, photo_type, count, with_user_image, aspect_ratio, mode
-):
+def validate_request(user_prompt, photo_type, count, with_user_image, aspect_ratio, mode):
     from .planner import SIZE_MAP
 
     if not isinstance(user_prompt, str) or not user_prompt.strip():

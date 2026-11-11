@@ -175,7 +175,7 @@ async def iter_quoted_image_paths(event, reply):
     except ImportError:
         global _logged_legacy
         if not _logged_legacy:
-            logger.info("当前 AstrBot 缺少新版引用图片解析器，使用 OneBot 兼容方式")
+            logger.info("[生活日程] 当前 AstrBot 缺少新版引用图片解析器，使用 OneBot 兼容方式")
             _logged_legacy = True
         seen = set()
         async for ref in _iter_legacy_quoted_image_refs(event, reply):
@@ -187,8 +187,8 @@ async def iter_quoted_image_paths(event, reply):
                 normalized = await _legacy_image_ref(event, ref)
                 if normalized:
                     yield await resolve_image_path(Image(file=normalized))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to resolve legacy quoted image: %s", describe_error(exc))
+            except Exception as exc:
+                logger.warning("[生活日程] 读取旧版引用图片失败：%s", describe_error(exc))
         return
 
     extractor = QuotedMessageExtractor(event)
@@ -221,8 +221,8 @@ async def iter_quoted_image_paths(event, reply):
             if normalized:
                 yield await resolve_image_path(Image(file=normalized))
         # SDK converters also raise generic Exception for unavailable attachments.
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to resolve quoted image: %s", describe_error(exc))
+        except Exception as exc:
+            logger.warning("[生活日程] 读取引用图片失败：%s", describe_error(exc))
 
 
 async def prepare_provider_images(image_refs: list[str]) -> list[str]:
@@ -300,7 +300,7 @@ async def collect_image_paths(event, max_images=4) -> list[str]:
                             try:
                                 add(await resolve_image_path(child))
                             except Exception as exc:
-                                logger.warning("引用图片读取失败：%s", describe_error(exc))
+                                logger.warning("[生活日程] 引用图片读取失败：%s", describe_error(exc))
                     if not embedded:
                         async for path in iter_quoted_image_paths(event, component):
                             add(path)
@@ -315,10 +315,10 @@ async def collect_image_paths(event, max_images=4) -> list[str]:
                         if identifier:
                             await forward(identifier)
             except Exception as exc:
-                logger.warning("图片读取失败：%s", describe_error(exc))
+                logger.warning("[生活日程] 图片读取失败：%s", describe_error(exc))
 
     try:
         await run_with_timeout(collect(), 30, "收集图片")
     except asyncio.TimeoutError:
-        logger.warning("图片收集超过 30 秒，使用已取得的图片")
+        logger.warning("[生活日程] 图片收集超过 30 秒，使用已取得的图片")
     return paths

@@ -47,18 +47,6 @@ class ComponentConfig(MutableMapping):
     def read_saved_config(self):
         return self._read_saved_parent()[self.section]
 
-    def ensure_saved_value(self, key, value):
-        """Update one built-in field using the latest on-disk settings."""
-        with self._write_lock:
-            persisted = self._read_saved_parent()
-            section = persisted[self.section]
-            if section.get(key) == value:
-                self[key] = value
-                return
-            section[key] = value
-            self.parent.clear()
-            self.parent.save_config(persisted)
-
     def save_config(self, replace_config=None, *, indent=2):
         with self._write_lock:
             if replace_config is not None:

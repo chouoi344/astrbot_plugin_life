@@ -61,9 +61,7 @@ def qq_direct_upload_payload(encoded: str, *, file_type: int) -> dict | None:
 
 
 def _valid_id(value: object) -> bool:
-    return isinstance(value, str) and bool(value) and not any(
-        char.isspace() for char in value
-    )
+    return isinstance(value, str) and bool(value) and not any(char.isspace() for char in value)
 
 
 def _reply_target(event):
@@ -71,13 +69,12 @@ def _reply_target(event):
     if platform not in ("qq_official", "qq_official_webhook"):
         return None
 
-    from botpy import BotAPI, Client
-    from botpy.http import BotHttp
-    from botpy.message import C2CMessage
-
     from astrbot.core.platform.sources.qqofficial.qqofficial_message_event import (
         QQOfficialMessageEvent,
     )
+    from botpy import BotAPI, Client
+    from botpy.http import BotHttp
+    from botpy.message import C2CMessage
 
     event_type = QQOfficialMessageEvent
     if platform == "qq_official_webhook":
@@ -111,11 +108,7 @@ def _reply_target(event):
     if not isinstance(api._http, BotHttp):
         return None
     openid = raw.author.user_openid
-    if (
-        not _valid_id(openid)
-        or openid != event.session_id
-        or openid != event.get_sender_id()
-    ):
+    if not _valid_id(openid) or openid != event.session_id or openid != event.get_sender_id():
         return None
     if not _valid_id(raw.id) or raw.id != message.message_id:
         return None
@@ -160,9 +153,8 @@ async def qq_media_upload_payload(component) -> dict | None:
 
 
 async def send_qq_official_reply(event, component, *, before_send) -> str:
-    from botpy.http import Route
-
     from astrbot.api.message_components import Plain
+    from botpy.http import Route
 
     target = _reply_target(event)
     if target is None:
@@ -230,11 +222,7 @@ async def send_qq_official_reply(event, component, *, before_send) -> str:
             status = response.status
     except (ClientError, OSError, RuntimeError, ValueError):
         return "unknown"
-    if (
-        not isinstance(receipt, dict)
-        or status == 408
-        or not (200 <= status < 300 or 400 <= status < 500)
-    ):
+    if not isinstance(receipt, dict) or status == 408 or not (200 <= status < 300 or 400 <= status < 500):
         return "unknown"
 
     rejected = False

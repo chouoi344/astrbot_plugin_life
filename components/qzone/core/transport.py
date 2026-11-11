@@ -19,8 +19,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from .request_policy import QzoneDeferred, RequestPolicy
-
 from ..vendor.qzone_protocol import (
     Credentials,
     number,
@@ -29,6 +27,7 @@ from ..vendor.qzone_protocol import (
     result_code,
     upload_fields,
 )
+from .request_policy import QzoneDeferred, RequestPolicy
 
 
 class QzoneReadError(RuntimeError):
@@ -67,14 +66,18 @@ class QzoneTransport:
     LIST_URL = BASE + "/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6"
     DETAIL_URL = BASE + "/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msgdetail_v6"
     REPLY_URL = BASE + "/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_re_feeds"
-    DELETE_URL = (
-        "https://h5.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
-    )
+    DELETE_URL = "https://h5.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_delete_v6"
     MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
     def __init__(
-        self, client: Any, expected_uin: int | str, timeout: int = 30, cookie_ttl: int = 1800,
-        *, policy: RequestPolicy | None = None, staging_dir: str | Path | None = None,
+        self,
+        client: Any,
+        expected_uin: int | str,
+        timeout: int = 30,
+        cookie_ttl: int = 1800,
+        *,
+        policy: RequestPolicy | None = None,
+        staging_dir: str | Path | None = None,
     ):
         value = str(expected_uin).strip()
         if not value.isdigit() or int(value) <= 0:
@@ -183,9 +186,12 @@ class QzoneTransport:
                 if self._credentials is not None and connection != self._connection_snapshot:
                     self._clear_credentials()
                 self.policy.check()
-                cached = self._credentials is not None and connection == self._connection_snapshot and (
-                    allow_expired or not self.cookie_ttl
-                    or time.monotonic() - self._refreshed_at < self.cookie_ttl
+                cached = (
+                    self._credentials is not None
+                    and connection == self._connection_snapshot
+                    and (
+                        allow_expired or not self.cookie_ttl or time.monotonic() - self._refreshed_at < self.cookie_ttl
+                    )
                 )
                 if cached and not force:
                     if verify_login:
@@ -265,15 +271,26 @@ class QzoneTransport:
 
     def _credential_rejection(self, tid: str = "", *, temporary=True) -> dict[str, Any]:
         return self._result(
-            "rejected", tid=tid,
-            message="暂时无法取得空间登录状态，本次操作尚未发送", stage="credentials",
-            retryable=temporary, blocked=True, retry_at=self.policy.retry_at, access_wait=temporary,
+            "rejected",
+            tid=tid,
+            message="暂时无法取得空间登录状态，本次操作尚未发送",
+            stage="credentials",
+            retryable=temporary,
+            blocked=True,
+            retry_at=self.policy.retry_at,
+            access_wait=temporary,
         )
 
     def _deferred_rejection(self, exc, tid=""):
         return self._result(
-            "rejected", tid=tid, message="空间访问正在等待恢复，本次操作尚未发送",
-            stage="cooldown", retryable=True, blocked=True, retry_at=exc.retry_at, access_wait=True,
+            "rejected",
+            tid=tid,
+            message="空间访问正在等待恢复，本次操作尚未发送",
+            stage="cooldown",
+            retryable=True,
+            blocked=True,
+            retry_at=exc.retry_at,
+            access_wait=True,
         )
 
     async def _http_session(self) -> Any:
@@ -288,8 +305,16 @@ class QzoneTransport:
         return self._http
 
     async def _request(
-        self, method: str, url: str, *, params=None, data=None, timeout=None, context=None,
-        before_write=None, before_read=None,
+        self,
+        method: str,
+        url: str,
+        *,
+        params=None,
+        data=None,
+        timeout=None,
+        context=None,
+        before_write=None,
+        before_read=None,
     ) -> dict[str, Any]:
         import aiohttp
 
@@ -316,8 +341,12 @@ class QzoneTransport:
             try:
                 self.policy.sent(write=write)
                 async with client.request(
-                    method, url, params=params, data=data,
-                    headers=context.headers(), cookies=context.cookies(),
+                    method,
+                    url,
+                    params=params,
+                    data=data,
+                    headers=context.headers(),
+                    cookies=context.cookies(),
                     allow_redirects=False,
                     timeout=aiohttp.ClientTimeout(total=timeout or self.timeout),
                 ) as response:
@@ -353,9 +382,7 @@ class QzoneTransport:
     def _response_reason(raw):
         http = number(raw.get("_http_status"), 200)
         nested = raw.get("data")
-        if http == 401 or result_code(raw) == -3000 or (
-            isinstance(nested, dict) and number(nested.get("ret")) == -100
-        ):
+        if http == 401 or result_code(raw) == -3000 or (isinstance(nested, dict) and number(nested.get("ret")) == -100):
             return "authentication"
         if http in (403, 429):
             return "restricted"
@@ -372,9 +399,7 @@ class QzoneTransport:
         return ""
 
     @staticmethod
-    def _result(
-        status: str, *, tid: str = "", created_at: int = 0, message: str = "", **extra
-    ) -> dict[str, Any]:
+    def _result(status: str, *, tid: str = "", created_at: int = 0, message: str = "", **extra) -> dict[str, Any]:
         return {
             "status": status,
             "tid": str(tid),
@@ -388,30 +413,36 @@ class QzoneTransport:
         code = result_code(raw)
         message = str(raw.get("message") or raw.get("msg") or "")
         if raw.get("_parse_error") or http >= 500 or 300 <= http < 400 or code in (None, -1):
-            return self._result(
-                "unknown", tid=tid, message=message or "空间操作结果不明，需要核对", code=code
-            )
+            return self._result("unknown", tid=tid, message=message or "空间操作结果不明，需要核对", code=code)
         nested = raw.get("data")
         nested_ret = result_code({"ret": nested.get("ret")}) if isinstance(nested, dict) else None
         if code == 0 and (http >= 400 or nested_ret not in (None, 0)):
-            return self._result(
-                "unknown", tid=tid, message="空间响应相互矛盾，需要核对后再操作", code=code
-            )
+            return self._result("unknown", tid=tid, message="空间响应相互矛盾，需要核对后再操作", code=code)
         if http >= 400 or code != 0:
-            return self._result(
-                "rejected", tid=tid, message=message or f"空间拒绝操作（{code}）", code=code
-            )
+            return self._result("rejected", tid=tid, message=message or f"空间拒绝操作（{code}）", code=code)
         return self._result("success", tid=tid, created_at=number(raw.get("now")), code=code)
 
     async def _mutate(
-        self, url: str, *, params=None, data=None, tid: str = "", timeout=None, context=None,
+        self,
+        url: str,
+        *,
+        params=None,
+        data=None,
+        tid: str = "",
+        timeout=None,
+        context=None,
         before_write=None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         import aiohttp
 
         try:
             raw = await self._request(
-                "POST", url, params=params, data=data, timeout=timeout, context=context,
+                "POST",
+                url,
+                params=params,
+                data=data,
+                timeout=timeout,
+                context=context,
                 before_write=before_write,
             )
         except asyncio.CancelledError:
@@ -420,7 +451,10 @@ class QzoneTransport:
             return self._deferred_rejection(exc, tid), {}
         except _PreflightRejected:
             return self._result(
-                "rejected", tid=tid, message="发布条件已变化，本次操作尚未发送", stage="preflight",
+                "rejected",
+                tid=tid,
+                message="发布条件已变化，本次操作尚未发送",
+                stage="preflight",
                 retryable=False,
             ), {}
         except (_CredentialsUnavailable, AccountUnavailableError):
@@ -437,15 +471,18 @@ class QzoneTransport:
             except Exception:
                 self._http = None
             return self._result(
-                "rejected", tid=tid, message="空间连接未建立，本次操作尚未发送", stage="connect",
-                retryable=True, blocked=True, retry_at=self.policy.retry_at,
+                "rejected",
+                tid=tid,
+                message="空间连接未建立，本次操作尚未发送",
+                stage="connect",
+                retryable=True,
+                blocked=True,
+                retry_at=self.policy.retry_at,
             ), {}
         except Exception:
             # Exception messages can contain signed URLs/cookies. Do not expose
             # them; the orchestrator already records which operation was active.
-            return self._result(
-                "unknown", tid=tid, message="请求未取得明确结果，请核对后再操作"
-            ), {}
+            return self._result("unknown", tid=tid, message="请求未取得明确结果，请核对后再操作"), {}
         result = self._classify(raw, tid=tid)
         reason = self._response_reason(raw)
         result["retryable"] = result["status"] == "rejected" and bool(reason)
@@ -456,7 +493,11 @@ class QzoneTransport:
     async def _read(self, url: str, *, params=None, context=None, before_read=None) -> dict[str, Any]:
         try:
             raw = await self._request(
-                "GET", url, params=params, context=context, before_read=before_read,
+                "GET",
+                url,
+                params=params,
+                context=context,
+                before_read=before_read,
             )
         except asyncio.CancelledError:
             raise
@@ -474,10 +515,16 @@ class QzoneTransport:
         result = self._classify(raw)
         if result["status"] != "success":
             if (
-                url == self.DETAIL_URL and result_code(raw) not in (None, 0)
-                and any(text in result["message"] for text in (
-                    "该说说已删除", "该说说已被删除", "说说已被删除",
-                ))
+                url == self.DETAIL_URL
+                and result_code(raw) not in (None, 0)
+                and any(
+                    text in result["message"]
+                    for text in (
+                        "该说说已删除",
+                        "该说说已被删除",
+                        "说说已被删除",
+                    )
+                )
             ):
                 raise QzonePostDeletedError("空间已明确告知这条说说被删除")
             raise QzoneReadError(result["message"] or "读取空间失败")
@@ -520,9 +567,7 @@ class QzoneTransport:
             raise ValueError("图片为空或超过允许大小")
         return payload
 
-    async def publish(
-        self, text: str, images: Any, *, before_publish=None, before_upload=None
-    ) -> dict[str, Any]:
+    async def publish(self, text: str, images: Any, *, before_publish=None, before_upload=None) -> dict[str, Any]:
         try:
             context = await self._request_context()
         except QzoneDeferred as exc:
@@ -542,7 +587,9 @@ class QzoneTransport:
             if self.staging_dir is not None:
                 self.staging_dir.mkdir(parents=True, exist_ok=True)
             staging = tempfile.TemporaryDirectory(
-                prefix="qzone-upload-", dir=self.staging_dir, ignore_cleanup_errors=True,
+                prefix="qzone-upload-",
+                dir=self.staging_dir,
+                ignore_cleanup_errors=True,
             )
         except Exception:
             return self._result("rejected", message="图片读取失败，尚未发布说说")
@@ -561,9 +608,7 @@ class QzoneTransport:
                 raise
             except Exception:
                 return self._result("rejected", message="图片读取失败，尚未发布说说")
-            return await self._publish_prepared(
-                context, text, prepared, before_publish, before_upload
-            )
+            return await self._publish_prepared(context, text, prepared, before_publish, before_upload)
 
     async def _publish_prepared(self, context, text, prepared, before_publish, before_upload):
         pic_bos, richvals = [], []
@@ -589,24 +634,27 @@ class QzoneTransport:
                     "base64": "1",
                     "picfile": encoded,
                 },
-                timeout=max(self.timeout, 60), context=context, before_write=before_upload,
+                timeout=max(self.timeout, 60),
+                context=context,
+                before_write=before_upload,
             )
             del encoded
             if result["status"] != "success":
                 if result.get("stage") == "preflight":
                     return result
                 return self._result(
-                    "rejected", message="图片上传未完成，尚未发布说说", stage="upload",
+                    "rejected",
+                    message="图片上传未完成，尚未发布说说",
+                    stage="upload",
                     retryable=result.get("retryable", True),
-                    blocked=result.get("blocked", False), retry_at=result.get("retry_at", 0),
+                    blocked=result.get("blocked", False),
+                    retry_at=result.get("retry_at", 0),
                     access_wait=result.get("access_wait", False),
                 )
             try:
                 picbo, richval = upload_fields(raw)
             except ValueError:
-                return self._result(
-                    "rejected", message="图片上传响应不完整，尚未发布说说", stage="upload"
-                )
+                return self._result("rejected", message="图片上传响应不完整，尚未发布说说", stage="upload")
             pic_bos.append(picbo)
             richvals.append(richval)
         data = {
@@ -626,17 +674,18 @@ class QzoneTransport:
         if prepared:
             data.update(pic_bo=",".join(pic_bos), richtype="1", richval="\t".join(richvals))
         result, raw = await self._mutate(
-            self.PUBLISH_URL, params={"g_tk": context.gtk, "uin": context.uin}, data=data,
-            context=context, before_write=before_publish,
+            self.PUBLISH_URL,
+            params={"g_tk": context.gtk, "uin": context.uin},
+            data=data,
+            context=context,
+            before_write=before_publish,
         )
         if result["status"] == "success":
             nested = raw.get("data") if isinstance(raw.get("data"), dict) else {}
             tid = str(raw.get("tid") or nested.get("tid") or "")
             if not tid or tid == "0":
                 return self._result("unknown", message="空间响应未包含说说标识，需要核对")
-            result.update(
-                tid=tid, created_at=number(raw.get("now", nested.get("now")), int(time.time()))
-            )
+            result.update(tid=tid, created_at=number(raw.get("now", nested.get("now")), int(time.time())))
         return result
 
     @staticmethod
@@ -668,9 +717,7 @@ class QzoneTransport:
                 "need_private_comment": int(with_comments),
             },
         )
-        source = (
-            raw.get("data") if isinstance(raw.get("data"), dict) and "msglist" not in raw else raw
-        )
+        source = raw.get("data") if isinstance(raw.get("data"), dict) and "msglist" not in raw else raw
         if "msglist" not in source:
             raise QzoneReadError("空间列表响应缺少列表字段")
         items = source.get("msglist") or []
@@ -691,9 +738,7 @@ class QzoneTransport:
             params={"uin": context.uin, "tid": tid, "format": "jsonp", "g_tk": context.gtk},
         )
         source = raw
-        if isinstance(raw.get("data"), dict) and not any(
-            key in raw for key in ("tid", "commentlist", "content")
-        ):
+        if isinstance(raw.get("data"), dict) and not any(key in raw for key in ("tid", "commentlist", "content")):
             source = raw["data"]
         if not any(key in source for key in ("tid", "commentlist", "content")):
             raise QzoneReadError("空间详情响应缺少帖子内容")
@@ -787,12 +832,7 @@ class QzoneTransport:
         target_id = str(comment.get("id") or "")
         parent_id = comment.get("parent_id")
         main_id = str(parent_id) if parent_id is not None else target_id
-        if (
-            not target_id.isdigit()
-            or int(target_id) <= 0
-            or not main_id.isdigit()
-            or int(main_id) <= 0
-        ):
+        if not target_id.isdigit() or int(target_id) <= 0 or not main_id.isdigit() or int(main_id) <= 0:
             return self._result("rejected", tid=tid, message="评论缺少可靠的服务端楼层标识")
         root_uin = number(comment.get("parent_uin")) if parent_id is not None else target_uin
         if root_uin <= 0:
@@ -823,9 +863,7 @@ class QzoneTransport:
         )
         if result["status"] == "success":
             nested = raw.get("data") if isinstance(raw.get("data"), dict) else {}
-            result["reply_id"] = str(
-                raw.get("tid") or raw.get("commentid") or nested.get("tid") or ""
-            )
+            result["reply_id"] = str(raw.get("tid") or raw.get("commentid") or nested.get("tid") or "")
             result["created_at"] = result["created_at"] or int(time.time())
         return result
 

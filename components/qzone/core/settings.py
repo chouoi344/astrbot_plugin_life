@@ -7,11 +7,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def normalize_config(config: Mapping[str, Any] | None) -> dict[str, bool | int | str]:
-    """Return only current user choices without mutating legacy configuration.
+    """Return the current user choices without mutating the configuration.
 
-    AstrBot may insert the new slider's default before plugin initialization.
-    An existing legacy maximum therefore takes precedence during migration;
-    the caller removes legacy keys before saving this normalized dictionary.
+    An existing legacy maximum (``daily_max``) takes precedence over the
+    slider default that AstrBot may have inserted.
     """
     config = config or {}
     raw_limit = config.get("daily_max", config.get("daily_post_limit", 2))
@@ -28,15 +27,12 @@ def normalize_config(config: Mapping[str, Any] | None) -> dict[str, bool | int |
         legacy_retry_count = config.get("auto_retry_count")
         failure_policy = "直接跳过" if legacy_retry_count in (0, "0") else "稍后重试"
     return {
-        "auto_publish": config.get("auto_publish")
-        if isinstance(config.get("auto_publish"), bool)
-        else True,
+        "auto_publish": config.get("auto_publish") if isinstance(config.get("auto_publish"), bool) else True,
         "daily_post_limit": max(0, min(5, limit)),
-        "auto_reply": config.get("auto_reply")
-        if isinstance(config.get("auto_reply"), bool)
-        else True,
+        "auto_reply": config.get("auto_reply") if isinstance(config.get("auto_reply"), bool) else True,
         "llm_provider_id": provider_id.strip(),
         "failure_policy": failure_policy,
+        "use_private_context": config.get("use_private_context") is True,
     }
 
 
@@ -53,6 +49,8 @@ class Settings:
     auto_retry_second_minutes: int = 10
     watch_posts: int = 20
     llm_provider_id: str = ""
+    # Off by default: posts are public, so private chat and memories stay out (item 16).
+    use_private_context: bool = False
     vision_provider_id: str = ""
     persona_id: str = ""
     timezone: str = "Asia/Shanghai"
@@ -77,6 +75,7 @@ class Settings:
             daily_min=1 if visible["daily_post_limit"] else 0,
             daily_max=visible["daily_post_limit"],
             llm_provider_id=visible["llm_provider_id"],
+            use_private_context=visible["use_private_context"],
             auto_retry_count=0 if visible["failure_policy"] == "直接跳过" else 2,
             timezone=timezone,
         )

@@ -17,9 +17,7 @@ from typing import Any
 
 
 def _json(value: Any) -> str:
-    return json.dumps(
-        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False
-    )
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False)
 
 
 def _copy(value: Any) -> Any:
@@ -171,9 +169,7 @@ class StateStore:
     def get_operation(self, key: str) -> dict | None:
         """Return an operation with decoded payload/result, or None."""
         with self._lock:
-            return self._operation(
-                self._db.execute("SELECT * FROM operations WHERE key=?", (key,)).fetchone()
-            )
+            return self._operation(self._db.execute("SELECT * FROM operations WHERE key=?", (key,)).fetchone())
 
     def list_operations(self, status: str | None = None, limit: int = 100) -> list[dict]:
         """List recent operations, optionally restricted to one state."""
@@ -224,9 +220,7 @@ class StateStore:
         """Keep the opportunity and its external action in one transaction."""
         if not key.startswith("auto:"):
             return
-        row = self._db.execute(
-            "SELECT record_json FROM plans WHERE plan_id=?", (key[5:],)
-        ).fetchone()
+        row = self._db.execute("SELECT record_json FROM plans WHERE plan_id=?", (key[5:],)).fetchone()
         if row is None:
             return
         plan = json.loads(row[0])
@@ -275,8 +269,7 @@ class StateStore:
         previous = None
         if kind == "memory":
             row = self._db.execute(
-                "SELECT event_key FROM outbox WHERE kind='memory' AND entity_id=? "
-                "ORDER BY rowid DESC LIMIT 1",
+                "SELECT event_key FROM outbox WHERE kind='memory' AND entity_id=? ORDER BY rowid DESC LIMIT 1",
                 (tid,),
             ).fetchone()
             previous = row[0] if row else None
@@ -335,9 +328,7 @@ class StateStore:
             if operation["status"] == "done":
                 self._sync_auto_plan(op_key, "done", operation["result"], now)
                 return _copy(operation["result"])
-            existing_row = self._db.execute(
-                "SELECT record_json FROM posts WHERE tid=?", (post["tid"],)
-            ).fetchone()
+            existing_row = self._db.execute("SELECT record_json FROM posts WHERE tid=?", (post["tid"],)).fetchone()
             if existing_row is not None:
                 existing = json.loads(existing_row[0])
                 if existing.get("source") != "external":
@@ -348,9 +339,7 @@ class StateStore:
                     completed = json.loads(row[0]) if row[0] is not None else {}
                     if str(completed.get("tid", "")) == post["tid"]:
                         raise ValueError("Post already belongs to another completed publication")
-                if str((existing.get("binding") or {}).get("bot_id", "")) != str(
-                    post["binding"].get("bot_id", "")
-                ):
+                if str((existing.get("binding") or {}).get("bot_id", "")) != str(post["binding"].get("bot_id", "")):
                     raise ValueError("Imported post belongs to a different bot account")
                 promoted = {**existing, **post}
                 if existing.get("status") == "deleted":
@@ -427,9 +416,7 @@ class StateStore:
             comment.setdefault("binding", post["binding"])
             comment.setdefault("parent_id", "")
             comment.setdefault("author_name", "")
-            comment.setdefault(
-                "status", "pending" if post["status"] == "published" else "cancelled"
-            )
+            comment.setdefault("status", "pending" if post["status"] == "published" else "cancelled")
             self._save_comment(comment, now)
             self._memory("comment", post, comment["created_at"], now, comment=comment)
             return True
@@ -482,18 +469,21 @@ class StateStore:
         post.setdefault("published_at", now)
         post.setdefault("local_day", "")
         with self._lock, self._db:
-            row = self._db.execute(
-                "SELECT record_json FROM posts WHERE tid=?", (post["tid"],)
-            ).fetchone()
+            row = self._db.execute("SELECT record_json FROM posts WHERE tid=?", (post["tid"],)).fetchone()
             if row is not None:
                 return json.loads(row[0])
             self._save_post(post, now)
             return _copy(post)
 
     def list_posts(
-        self, limit: int = 20, include_deleted: bool = False, *,
-        bot_id: str | None = None, persona_id: str | None = None,
-        published_from: float | None = None, published_before: float | None = None,
+        self,
+        limit: int = 20,
+        include_deleted: bool = False,
+        *,
+        bot_id: str | None = None,
+        persona_id: str | None = None,
+        published_from: float | None = None,
+        published_before: float | None = None,
     ) -> list[dict]:
         """Return newest publications; deleted facts remain available on request."""
         conditions, args = [], []
@@ -536,8 +526,13 @@ class StateStore:
                 return None
 
     def list_comments(
-        self, tid: str | None = None, limit: int = 100, status: str | None = None, *,
-        bot_id: str | None = None, persona_id: str | None = None,
+        self,
+        tid: str | None = None,
+        limit: int = 100,
+        status: str | None = None,
+        *,
+        bot_id: str | None = None,
+        persona_id: str | None = None,
     ) -> list[dict]:
         """Return recent comments chronologically, optionally across posts/by status."""
         conditions, args = [], []
@@ -571,23 +566,12 @@ class StateStore:
             comment.update(status=status, error=error)
             self._save_comment(comment, time.time())
 
-    def update_post_memory_id(self, tid: str, memory_id: str) -> None:
-        """Save the upstream publication-memory identifier after a successful sync."""
-        with self._lock, self._db:
-            post = self._post(str(tid))
-            post["memory_id"] = str(memory_id)
-            self._save_post(post, time.time())
-
     def get_outbox(self, event_key: str) -> dict | None:
         """Return a queue entry, including payload, attempts and predecessor key."""
         with self._lock:
-            return self._outbox(
-                self._db.execute("SELECT * FROM outbox WHERE event_key=?", (event_key,)).fetchone()
-            )
+            return self._outbox(self._db.execute("SELECT * FROM outbox WHERE event_key=?", (event_key,)).fetchone())
 
-    def due_outbox(
-        self, kind: str | None = None, now: float | None = None, limit: int = 20
-    ) -> list[dict]:
+    def due_outbox(self, kind: str | None = None, now: float | None = None, limit: int = 20) -> list[dict]:
         """List due pending/reconcile work whose earlier same-post memory is done."""
         now = time.time() if now is None else now
         sql = (
@@ -626,9 +610,7 @@ class StateStore:
         """
         result, now = _copy(result or {}), time.time()
         with self._lock, self._db:
-            row = self._db.execute(
-                "SELECT * FROM outbox WHERE event_key=?", (event_key,)
-            ).fetchone()
+            row = self._db.execute("SELECT * FROM outbox WHERE event_key=?", (event_key,)).fetchone()
             if row is None:
                 raise KeyError(event_key)
             if row["status"] == "done":
@@ -643,9 +625,7 @@ class StateStore:
                     post["memory_id"] = str(result["memory_id"])
                 replacements = result.get("updated_memory_ids")
                 if isinstance(replacements, dict) and post.get("memory_id") is not None:
-                    replacements = {
-                        str(old): str(new) for old, new in replacements.items() if new is not None
-                    }
+                    replacements = {str(old): str(new) for old, new in replacements.items() if new is not None}
                     current_id, visited = str(post["memory_id"]), set()
                     while current_id in replacements and current_id not in visited:
                         visited.add(current_id)
@@ -654,26 +634,20 @@ class StateStore:
                 if post.get("memory_id") != original_id:
                     self._save_post(post, now)
             self._db.execute(
-                "UPDATE outbox SET status='done',result_json=?,error=NULL,updated_at=? "
-                "WHERE event_key=?",
+                "UPDATE outbox SET status='done',result_json=?,error=NULL,updated_at=? WHERE event_key=?",
                 (_json(result), now, event_key),
             )
 
-    def retry_outbox(
-        self, event_key: str, error: str, next_attempt_at: float, needs_reconcile: bool = False
-    ) -> None:
+    def retry_outbox(self, event_key: str, error: str, next_attempt_at: float, needs_reconcile: bool = False) -> None:
         """Requeue claimed work; reconcile requires checking its external event marker."""
         with self._lock, self._db:
-            row = self._db.execute(
-                "SELECT status FROM outbox WHERE event_key=?", (event_key,)
-            ).fetchone()
+            row = self._db.execute("SELECT status FROM outbox WHERE event_key=?", (event_key,)).fetchone()
             if row is None:
                 raise KeyError(event_key)
             if row[0] in ("done", "cancelled"):
                 return
             self._db.execute(
-                "UPDATE outbox SET status=?,error=?,next_attempt_at=?,updated_at=? "
-                "WHERE event_key=?",
+                "UPDATE outbox SET status=?,error=?,next_attempt_at=?,updated_at=? WHERE event_key=?",
                 (
                     "reconcile" if needs_reconcile else "pending",
                     str(error),
@@ -683,9 +657,7 @@ class StateStore:
                 ),
             )
 
-    def defer_outbox(
-        self, event_key: str, error: str, next_attempt_at: float, *, refund_attempt: bool = False
-    ) -> None:
+    def defer_outbox(self, event_key: str, error: str, next_attempt_at: float, *, refund_attempt: bool = False) -> None:
         """Postpone a self-like before sending without spending its retry budget.
 
         A refund is allowed only for the current running claim whose caller has
@@ -728,9 +700,7 @@ class StateStore:
                     now,
                 ),
             )
-            row = self._db.execute(
-                "SELECT record_json FROM plans WHERE plan_id=?", (plan["plan_id"],)
-            ).fetchone()
+            row = self._db.execute("SELECT record_json FROM plans WHERE plan_id=?", (plan["plan_id"],)).fetchone()
             return json.loads(row[0])
 
     def list_plans(self, day: str) -> list[dict]:
@@ -746,22 +716,16 @@ class StateStore:
     def get_plan(self, plan_id: str) -> dict | None:
         """Read a persisted opportunity including its retry/cache state."""
         with self._lock:
-            row = self._db.execute(
-                "SELECT record_json FROM plans WHERE plan_id=?", (plan_id,)
-            ).fetchone()
+            row = self._db.execute("SELECT record_json FROM plans WHERE plan_id=?", (plan_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
     def mood_opportunity(self, day: str, bot_id: str) -> str | None:
         return self.get_value(f"mood_opportunity:{bot_id}:{day}")
 
-    def claim_plan(
-        self, plan_id: str, *, now: float | None = None, retry_delays: list[int] | None = None
-    ) -> bool:
+    def claim_plan(self, plan_id: str, *, now: float | None = None, retry_delays: list[int] | None = None) -> bool:
         """Claim an unexecuted plan once; worker recovery does not reclaim uncertainty."""
         with self._lock, self._db:
-            row = self._db.execute(
-                "SELECT record_json,status FROM plans WHERE plan_id=?", (plan_id,)
-            ).fetchone()
+            row = self._db.execute("SELECT record_json,status FROM plans WHERE plan_id=?", (plan_id,)).fetchone()
             if row is None or row["status"] != "pending":
                 return False
             plan = json.loads(row["record_json"])
@@ -777,8 +741,9 @@ class StateStore:
                 if attempts and "retry_delays" in plan:
                     budget = min(budget, len(plan["retry_delays"]))
                 if attempts > budget:
-                    plan.update(status="skipped", stage="skipped", next_attempt_at=None,
-                                last_error_kind="retry_exhausted")
+                    plan.update(
+                        status="skipped", stage="skipped", next_attempt_at=None, last_error_kind="retry_exhausted"
+                    )
                     self._write_plan(plan, time.time())
                     return False
                 plan.setdefault("first_attempt_at", now)
@@ -790,10 +755,7 @@ class StateStore:
                     stage="claimed",
                 )
             plan["status"] = "running"
-            mood_key = (
-                f"mood_opportunity:{plan['bot_id']}:{plan['day']}"
-                if plan.get("trigger") == "mood" else None
-            )
+            mood_key = f"mood_opportunity:{plan['bot_id']}:{plan['day']}" if plan.get("trigger") == "mood" else None
             reservation = _json(plan_id)
             cursor = self._db.execute(
                 "UPDATE plans SET status='running',record_json=?,updated_at=? "
@@ -802,9 +764,7 @@ class StateStore:
                 (_json(plan), time.time(), plan_id, mood_key, reservation),
             )
             if cursor.rowcount == 1 and mood_key is not None:
-                self._db.execute(
-                    "INSERT OR IGNORE INTO kv(key,value_json) VALUES(?,?)", (mood_key, reservation)
-                )
+                self._db.execute("INSERT OR IGNORE INTO kv(key,value_json) VALUES(?,?)", (mood_key, reservation))
             return cursor.rowcount == 1
 
     def update_plan(self, plan_id: str, **fields) -> dict:
@@ -847,11 +807,7 @@ class StateStore:
         expires = float(plan.get("expires_at", float(plan["slot_at"]) + 3600))
         plan.setdefault("first_failure_at", now)
         plan["last_failure_at"] = now
-        next_at = (
-            now + float(delays[attempts - 1])
-            if 0 < attempts <= len(delays)
-            else None
-        )
+        next_at = now + float(delays[attempts - 1]) if 0 < attempts <= len(delays) else None
         plan.update(last_error_kind=error_kind, next_attempt_at=None)
         if next_at is None or max(next_at, now) >= expires:
             plan.update(status="skipped", stage="skipped")
@@ -892,7 +848,8 @@ class StateStore:
                 self._sync_auto_plan(
                     operation["key"],
                     "uncertain" if operation["status"] == "inflight" else operation["status"],
-                    operation.get("result"), time.time(),
+                    operation.get("result"),
+                    time.time(),
                 )
                 return self.get_plan(plan_id)
             if plan["status"] not in ("running", "failed"):
@@ -901,11 +858,14 @@ class StateStore:
             plan.update(
                 attempt_count=max(0, int(plan.get("attempt_count", 0)) - 1),
                 last_error_kind="account_waiting",
-                next_attempt_at=max(now, retry_at), status="pending", stage="access_wait",
+                next_attempt_at=max(now, retry_at),
+                status="pending",
+                stage="access_wait",
             )
             if plan["next_attempt_at"] >= expires:
-                plan.update(status="skipped", stage="skipped", next_attempt_at=None,
-                            last_error_kind="opportunity_expired")
+                plan.update(
+                    status="skipped", stage="skipped", next_attempt_at=None, last_error_kind="opportunity_expired"
+                )
             self._write_plan(plan, time.time())
             return _copy(plan)
 
@@ -914,9 +874,7 @@ class StateStore:
         if status not in ("done", "failed", "cancelled", "uncertain", "skipped"):
             raise ValueError("Invalid final plan status")
         with self._lock, self._db:
-            row = self._db.execute(
-                "SELECT record_json FROM plans WHERE plan_id=?", (plan_id,)
-            ).fetchone()
+            row = self._db.execute("SELECT record_json FROM plans WHERE plan_id=?", (plan_id,)).fetchone()
             if row is None:
                 raise KeyError(plan_id)
             plan = json.loads(row[0])
@@ -945,8 +903,7 @@ class StateStore:
                     last_error_kind="schedule_changed",
                 )
                 self._db.execute(
-                    "UPDATE plans SET status='cancelled',record_json=?,updated_at=? "
-                    "WHERE plan_id=?",
+                    "UPDATE plans SET status='cancelled',record_json=?,updated_at=? WHERE plan_id=?",
                     (_json(plan), time.time(), row["plan_id"]),
                 )
             return len(rows)
@@ -954,9 +911,7 @@ class StateStore:
     def expire_previous_plans(self, day: str) -> int:
         """Give yesterday's abandoned opportunities a terminal, inspectable state."""
         with self._lock, self._db:
-            rows = self._db.execute(
-                "SELECT record_json FROM plans WHERE day<? AND status='pending'", (day,)
-            ).fetchall()
+            rows = self._db.execute("SELECT record_json FROM plans WHERE day<? AND status='pending'", (day,)).fetchall()
             for row in rows:
                 plan = json.loads(row[0])
                 plan.update(
@@ -1003,8 +958,7 @@ class StateStore:
             ).rowcount
             for kind, state in (("memory", "reconcile"), ("self_like", "uncertain")):
                 counts[kind] = self._db.execute(
-                    "UPDATE outbox SET status=?,next_attempt_at=?,updated_at=? "
-                    "WHERE kind=? AND status='running'",
+                    "UPDATE outbox SET status=?,next_attempt_at=?,updated_at=? WHERE kind=? AND status='running'",
                     (state, now, now, kind),
                 ).rowcount
             rows = self._db.execute("SELECT plan_id,record_json FROM plans").fetchall()
@@ -1035,9 +989,7 @@ class StateStore:
                     self._write_plan(plan, now)
                 if _json(self.get_plan(row["plan_id"])) != old_state:
                     counts["plans"] += 1
-            rows = self._db.execute(
-                "SELECT record_json FROM comments WHERE status='processing'"
-            ).fetchall()
+            rows = self._db.execute("SELECT record_json FROM comments WHERE status='processing'").fetchall()
             for row in rows:
                 comment = json.loads(row[0])
                 comment["status"] = "uncertain"
@@ -1051,14 +1003,9 @@ class StateStore:
         with self._lock:
             for table in ("posts", "comments", "operations", "outbox", "plans"):
                 result[table] = {
-                    row[0]: row[1]
-                    for row in self._db.execute(
-                        f"SELECT status,COUNT(*) FROM {table} GROUP BY status"
-                    )
+                    row[0]: row[1] for row in self._db.execute(f"SELECT status,COUNT(*) FROM {table} GROUP BY status")
                 }
             result["outbox_by_kind"] = {}
-            for row in self._db.execute(
-                "SELECT kind,status,COUNT(*) FROM outbox GROUP BY kind,status"
-            ):
+            for row in self._db.execute("SELECT kind,status,COUNT(*) FROM outbox GROUP BY kind,status"):
                 result["outbox_by_kind"].setdefault(row[0], {})[row[1]] = row[2]
         return result

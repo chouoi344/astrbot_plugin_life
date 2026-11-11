@@ -7,9 +7,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import aiohttp
-from PIL import Image, ImageOps
-
 from astrbot.api import logger as log
+from PIL import Image, ImageOps
 
 from .errors import describe_error, run_with_timeout
 

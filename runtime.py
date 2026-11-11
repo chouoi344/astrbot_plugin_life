@@ -6,6 +6,8 @@ from astrbot.api.platform import MessageType
 from astrbot.core.star.session_plugin_manager import SessionPluginManager
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_path
 
+from .components.common.contracts import ENABLED_CACHE
+
 ROOT_PLUGIN_ID = "astrbot_plugin_life"
 SCHEDULE_ID = "astrbot_plugin_life_scheduler_plus"
 PHOTO_ID = "astrbot_plugin_life_photo"
@@ -47,12 +49,8 @@ def legacy_conflicts(context, *, check_unloaded=False):
     blocked = []
     for plugin_id in LEGACY_IDS:
         plugin = context.get_registered_star(plugin_id)
-        if plugin is not None and plugin.activated:
-            blocked.append(plugin_id)
-        elif (
-            plugin is None
-            and root is not None
-            and (root / plugin_id / "metadata.yaml").is_file()
+        if (plugin is not None and plugin.activated) or (
+            plugin is None and root is not None and (root / plugin_id / "metadata.yaml").is_file()
         ):
             blocked.append(plugin_id)
     return tuple(blocked)
@@ -60,29 +58,37 @@ def legacy_conflicts(context, *, check_unloaded=False):
 
 def get_component(context, legacy_id):
     plugin = context.get_registered_star(ROOT_PLUGIN_ID)
-    if (
-        not plugin
-        or not plugin.activated
-        or not plugin.star_cls
-        or legacy_conflicts(context)
-    ):
+    if not plugin or not plugin.activated or not plugin.star_cls or legacy_conflicts(context):
         return None
     return plugin.star_cls.components.get(legacy_id)
 
 
-async def component_enabled(
-    context, legacy_id, umo, event=None, *, allow_disabled=False
-):
+async def component_enabled(context, legacy_id, umo, event=None, *, allow_disabled=False, fresh=False):
+    """Whether a component may run for ``umo``.
+
+    Checked once per message (item 23); ``fresh=True`` re-checks, for code that
+    runs later in the background and must see a change made meanwhile.
+    """
+    if event is None or fresh:
+        return await _component_enabled(context, legacy_id, umo, None, allow_disabled)
+    cache = event.get_extra(ENABLED_CACHE)
+    if not isinstance(cache, dict):
+        cache = {}
+        event.set_extra(ENABLED_CACHE, cache)
+    key = (legacy_id, str(umo), allow_disabled)
+    if key not in cache:
+        cache[key] = await _component_enabled(context, legacy_id, umo, event, allow_disabled)
+    return cache[key]
+
+
+async def _component_enabled(context, legacy_id, umo, event, allow_disabled):
     component = get_component(context, legacy_id)
     if component is None:
         return False
     config = component.config
     if not allow_disabled:
         if legacy_id == PHOTO_ID:
-            if not any(
-                config[key]
-                for key in ("generate_enabled", "edit_enabled", "selfie_enabled")
-            ):
+            if not any(config[key] for key in ("generate_enabled", "edit_enabled", "selfie_enabled")):
                 return False
         elif not config["enabled"]:
             return False

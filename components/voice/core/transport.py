@@ -14,10 +14,11 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Plain, Record
 
+from ...common.contracts import PROACTIVE_DELIVERY
+
 if TYPE_CHECKING:
     from astrbot.api.event import MessageChain
 
-TEXT_ONLY_PLATFORM = "weixin_oc"
 _QQ_OFFICIAL_PLATFORMS = frozenset({"qq_official", "qq_official_webhook"})
 _CONFIRMED_PRIVATE_PLATFORMS = _QQ_OFFICIAL_PLATFORMS | {"aiocqhttp"}
 _NATIVE_EVENTS = {
@@ -51,7 +52,7 @@ def supports_native_target(event: AstrMessageEvent) -> bool:
     """QQ 官方原生语音只支持 C2C 私聊。"""
     if event.get_platform_name() not in _QQ_OFFICIAL_PLATFORMS:
         return True
-    if event.get_extra("life_delivery_v1") is True and getattr(event, "supports_voice", False):
+    if event.get_extra(PROACTIVE_DELIVERY) is True and getattr(event, "supports_voice", False):
         return True
     from ...photo.core.qq_official_delivery import can_send_qq_official_photo
 
@@ -59,10 +60,7 @@ def supports_native_target(event: AstrMessageEvent) -> bool:
 
 
 def uses_confirmed_transport(event: AstrMessageEvent) -> bool:
-    return (
-        event.get_platform_name() in _CONFIRMED_PRIVATE_PLATFORMS
-        or _native_platform(event) == "webchat"
-    )
+    return event.get_platform_name() in _CONFIRMED_PRIVATE_PLATFORMS or _native_platform(event) == "webchat"
 
 
 def _prepare_failed(platform: str, exc: Exception) -> None:
@@ -70,7 +68,10 @@ def _prepare_failed(platform: str, exc: Exception) -> None:
 
 
 async def _send_onebot(
-    event: AstrMessageEvent, message: MessageChain, before_submit, allow_submit,
+    event: AstrMessageEvent,
+    message: MessageChain,
+    before_submit,
+    allow_submit,
 ) -> bool | None:
     from aiocqhttp import Event
     from aiocqhttp.exceptions import ActionFailed, ApiNotAvailable
@@ -93,9 +94,7 @@ async def _send_onebot(
     if not await allow_submit():
         return False
     try:
-        response = await event.bot.send_private_msg(
-            user_id=int(sender), message=messages, **routing
-        )
+        response = await event.bot.send_private_msg(user_id=int(sender), message=messages, **routing)
     except (ActionFailed, ApiNotAvailable):
         return False
     message_id = response.get("message_id") if isinstance(response, dict) else None
@@ -105,7 +104,9 @@ async def _send_onebot(
 
 
 async def _send_qq_official(
-    event: AstrMessageEvent, message: MessageChain, allow_submit,
+    event: AstrMessageEvent,
+    message: MessageChain,
+    allow_submit,
 ) -> bool | None:
     from ...photo.core.qq_official_delivery import send_qq_official_reply
 
@@ -118,7 +119,10 @@ async def _send_qq_official(
 
 
 async def _send_webchat(
-    event: AstrMessageEvent, message: MessageChain, before_submit, allow_submit,
+    event: AstrMessageEvent,
+    message: MessageChain,
+    before_submit,
+    allow_submit,
 ) -> bool:
     from astrbot.core.platform.sources.webchat.webchat_event import attachments_dir
     from astrbot.core.platform.sources.webchat.webchat_queue_mgr import webchat_queue_mgr
@@ -135,9 +139,7 @@ async def _send_webchat(
         try:
             encoded = await segment.convert_to_base64()
             before_submit()
-            await asyncio.to_thread(
-                (Path(attachments_dir) / filename).write_bytes, base64.b64decode(encoded)
-            )
+            await asyncio.to_thread((Path(attachments_dir) / filename).write_bytes, base64.b64decode(encoded))
         except asyncio.CancelledError:
             before_submit()
             raise
@@ -162,12 +164,15 @@ async def _send_webchat(
 
 
 async def send_native_private(
-    event: AstrMessageEvent, message: MessageChain, *, before_submit: Callable[[], None],
+    event: AstrMessageEvent,
+    message: MessageChain,
+    *,
+    before_submit: Callable[[], None],
     original_send=None,
     before_native_submit: Callable[[], Awaitable[bool]] | None = None,
 ) -> bool | None:
     """True 确认发出，False 明确未发，None 表示结果无法确认。"""
-    if not event.is_private_chat() or event.get_platform_name() == TEXT_ONLY_PLATFORM:
+    if not event.is_private_chat():
         return False
     before_submit()
 

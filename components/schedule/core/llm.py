@@ -9,15 +9,21 @@ import uuid
 
 from astrbot.api import logger as log
 
-from .errors import describe_error, run_with_timeout
+from ...common.text import extract_json
 from .domain import PROFILE_FIELDS
+from .errors import describe_error, run_with_timeout
 from .model_queue import ModelQueue
 
-
 MODEL_TIMEOUTS = {
-    "profile": 180, "schedule": 180, "generation": 180,
-    "surprise": 120, "event": 120, "recap": 120, "weather": 120,
-    "chat": 60, "outfit": 195,
+    "profile": 180,
+    "schedule": 180,
+    "generation": 180,
+    "surprise": 120,
+    "event": 120,
+    "recap": 120,
+    "weather": 120,
+    "chat": 60,
+    "outfit": 195,
 }
 
 # Garment fit (e.g. 修身) and makeup remain valid. Body/face identity and
@@ -36,21 +42,6 @@ def wearable_only(value):
         return ""
     clauses = re.split(r"[，,；;。\n]+", value)
     return "，".join(clause.strip() for clause in clauses if clause.strip() and not NON_WEARABLE_RE.search(clause))
-
-
-def extract_json(text: str) -> dict:
-    decoder = json.JSONDecoder()
-    text = str(text or "").strip()
-    for index, character in enumerate(text):
-        if character != "{":
-            continue
-        try:
-            value, _ = decoder.raw_decode(text[index:])
-        except ValueError:
-            continue
-        if isinstance(value, dict):
-            return value
-    raise ValueError("模型返回的内容缺少有效 JSON 对象")
 
 
 class NoProviderError(RuntimeError):
@@ -75,7 +66,9 @@ class LLMClient:
 
     def _profile_empty(self):
         profile = self.config.get("profile", {})
-        return not isinstance(profile, dict) or not any(str(profile.get(key, "") or "").strip() for key in PROFILE_FIELDS)
+        return not isinstance(profile, dict) or not any(
+            str(profile.get(key, "") or "").strip() for key in PROFILE_FIELDS
+        )
 
     def timeout_for(self, purpose):
         return self.timeout if self.timeout is not None else self.timeouts.get(purpose, 180)
@@ -174,7 +167,12 @@ class LLMClient:
         if platform == "aiocqhttp":
             return umo
         parts = umo.split(":", 2)
-        if platform in {"qq_official", "qq_official_webhook"} and len(parts) == 3 and parts[1] == "FriendMessage" and parts[2]:
+        if (
+            platform in {"qq_official", "qq_official_webhook"}
+            and len(parts) == 3
+            and parts[1] == "FriendMessage"
+            and parts[2]
+        ):
             return umo
         return None
 
@@ -192,15 +190,19 @@ class LLMClient:
             conversation = await run_with_timeout(manager.get_conversation(umo, cid), 10, "读取参考聊天")
             history = getattr(conversation, "history", None)
             history = json.loads(history) if isinstance(history, str) else history
-            return [{"role": item.get("role", ""), "content": item.get("content", "")}
-                    for item in (history or [])[-count:] if isinstance(item, dict)]
+            return [
+                {"role": item.get("role", ""), "content": item.get("content", "")}
+                for item in (history or [])[-count:]
+                if isinstance(item, dict)
+            ]
         except Exception as exc:
             log.warning("读取参考聊天失败：%s", describe_error(exc))
             return []
 
     async def call(self, prompt, *, provider_id=None, images=None, purpose="generation"):
-        return await self._serial(purpose, lambda: self._call_provider(
-            prompt, provider_id=provider_id, images=images, purpose=purpose))
+        return await self._serial(
+            purpose, lambda: self._call_provider(prompt, provider_id=provider_id, images=images, purpose=purpose)
+        )
 
     async def _call_provider(self, prompt, *, provider_id=None, images=None, purpose="generation"):
         provider_id = provider_id or self.config.get("llm_provider", "")
@@ -214,6 +216,7 @@ class LLMClient:
             prepared = None
             if images:
                 from .image_input import prepare_provider_images
+
                 prepared = await run_with_timeout(prepare_provider_images(images[:4]), 30, "准备模型图片")
             for attempt in range(2):
                 response = await provider.text_chat(prompt, session_id=sid, contexts=[], image_urls=prepared)
@@ -238,6 +241,7 @@ class LLMClient:
                     value = delete(sid)
                     if inspect.isawaitable(value):
                         await value
+
             try:
                 await run_with_timeout(cleanup(), 5, "清理临时模型会话")
             except Exception as exc:
@@ -264,18 +268,34 @@ class LLMClient:
                 # This entire operation already owns one slot and one 195s
                 # budget, including a possible JSON repair; never enqueue it
                 # recursively or restart its deadline on the second attempt.
-                payload = extract_json(await self._call_provider(prompt, images=images, provider_id=provider_id, purpose="outfit"))
-                fields = [("overall_style", "整体风格"), ("clothing", "服装"), ("footwear", "鞋袜"),
-                          ("accessories", "配饰"), ("hair", "发型"), ("makeup", "妆容"),
-                          ("details", "颜色材质与版型"), ("constraints", "穿戴约束")]
-                parts = [label + "：" + cleaned for key, label in fields
-                         if (cleaned := wearable_only(payload.get(key)))]
+                payload = extract_json(
+                    await self._call_provider(prompt, images=images, provider_id=provider_id, purpose="outfit")
+                )
+                fields = [
+                    ("overall_style", "整体风格"),
+                    ("clothing", "服装"),
+                    ("footwear", "鞋袜"),
+                    ("accessories", "配饰"),
+                    ("hair", "发型"),
+                    ("makeup", "妆容"),
+                    ("details", "颜色材质与版型"),
+                    ("constraints", "穿戴约束"),
+                ]
+                parts = [
+                    label + "：" + cleaned for key, label in fields if (cleaned := wearable_only(payload.get(key)))
+                ]
                 if not parts:
                     raise ValueError("没有提取到穿戴信息")
                 category = payload.get("category", "外出")
                 seasons = payload.get("seasons")
-                return {"description": "；".join(parts) + "。", "category": category if category in {"外出", "居家", "睡衣", "运动"} else "外出",
-                        "seasons": [season for season in ("春", "夏", "秋", "冬") if isinstance(seasons, list) and season in seasons] or ["春", "夏", "秋", "冬"]}
+                return {
+                    "description": "；".join(parts) + "。",
+                    "category": category if category in {"外出", "居家", "睡衣", "运动"} else "外出",
+                    "seasons": [
+                        season for season in ("春", "夏", "秋", "冬") if isinstance(seasons, list) and season in seasons
+                    ]
+                    or ["春", "夏", "秋", "冬"],
+                }
             except ValueError:
                 if attempt:
                     raise

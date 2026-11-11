@@ -14,10 +14,10 @@ import uuid
 from datetime import date
 from pathlib import Path
 
+from astrbot.api import logger as log
 from PIL import Image
 
-from astrbot.api import logger as log
-
+from ....runtime import ROOT_PLUGIN_ID
 from .calendar_info import get_calendar_info
 from .domain import DEFAULT_KEYWORDS, PROFILE_FIELDS
 from .errors import describe_error, run_with_timeout, user_error
@@ -27,8 +27,6 @@ from .timeline import parse_local, project_slot_rest
 from .uploads import WardrobeUploadProcessor
 from .view import build_wardrobe_payload
 from .wardrobe import CATEGORIES, SEASONS, season_for_day
-
-from ....runtime import ROOT_PLUGIN_ID
 
 
 class ViewError(ValueError):
@@ -135,14 +133,22 @@ class LifeViewAPI:
 
     async def _respond(self, action, *, write=False):
         from astrbot.api.web import json_response, request
-        role_request = action.__name__ not in {"_settings_get", "_settings_save", "_setup_status",
-                                               "_profile_regenerate", "_task_get"}
+
+        role_request = action.__name__ not in {
+            "_settings_get",
+            "_settings_save",
+            "_setup_status",
+            "_profile_regenerate",
+            "_task_get",
+        }
         current = asyncio.current_task()
         try:
             if write:
                 self._require_admin(request)
                 if not self.config.get("enabled", True) and action.__name__ in {
-                    "_wardrobe_transcribe", "_schedule_retry", "_profile_regenerate",
+                    "_wardrobe_transcribe",
+                    "_schedule_retry",
+                    "_profile_regenerate",
                 }:
                     raise ViewError("日程功能已关闭，请在「拟人生活」设置中开启日程后再试。", 409)
             await self.engine.setup.refresh()
@@ -176,7 +182,6 @@ class LifeViewAPI:
 
     async def _setup_status(self, request):
         return await self.engine.setup.refresh()
-
 
     @staticmethod
     async def _body(request):
@@ -469,13 +474,30 @@ class LifeViewAPI:
                 if not already_exists:
                     if not row.get("can_collect") or row.get("source") != "temporary":
                         raise ViewError("这套衣服已从衣柜删除，如需保留，请在衣柜里重新添加", 409)
-                    normalized = self._outfit({"description": row["description"], "category": row["category"],
-                                              "seasons": [season_for_day(calendar_day)]})
-                    entry = next((item for item in entries if description_key(item["description"]) == description_key(normalized["description"])), None)
+                    normalized = self._outfit(
+                        {
+                            "description": row["description"],
+                            "category": row["category"],
+                            "seasons": [season_for_day(calendar_day)],
+                        }
+                    )
+                    entry = next(
+                        (
+                            item
+                            for item in entries
+                            if description_key(item["description"]) == description_key(normalized["description"])
+                        ),
+                        None,
+                    )
                     already_exists = entry is not None
                     if entry is None:
-                        entry = {"__template_key": "outfit", "id": "wardrobe-" + uuid.uuid4().hex,
-                                 "image_upload": [], "image_processed_hash": "", **normalized}
+                        entry = {
+                            "__template_key": "outfit",
+                            "id": "wardrobe-" + uuid.uuid4().hex,
+                            "image_upload": [],
+                            "image_processed_hash": "",
+                            **normalized,
+                        }
                 updated = bind_outfit_reference(day, outfit_key, entry)
                 adding = not any(item["id"] == entry["id"] for item in entries)
                 config_saved = day_attempted = False
@@ -498,12 +520,17 @@ class LifeViewAPI:
                             log.error("收进衣柜失败后的日程还原未完成：%s", describe_error(rollback_error))
                     raise
                 final_entries = entries + [entry] if adding else entries
-                collected = next(item for item in self._outfit_rows(updated, final_entries) if item["key"] == outfit_key)
+                collected = next(
+                    item for item in self._outfit_rows(updated, final_entries) if item["key"] == outfit_key
+                )
                 number = collected["wardrobe_number"]
         collected = (await asyncio.to_thread(self._outfit_images, [collected]))[0]
-        return {"saved": True, "already_exists": already_exists,
-                "message": ("已在衣柜里·穿搭" if already_exists else "已收进衣柜·穿搭") + str(number),
-                "outfit": collected}
+        return {
+            "saved": True,
+            "already_exists": already_exists,
+            "message": ("已在衣柜里·穿搭" if already_exists else "已收进衣柜·穿搭") + str(number),
+            "outfit": collected,
+        }
 
     async def _run_outfit_task(self, task_id, source):
         task = self.tasks[task_id]
@@ -563,7 +590,8 @@ class LifeViewAPI:
             self.engine.profile_lock.locked()
             or self._active_worker(self.engine.profile_task)
             or any(
-                task.get("type", "profile") == "profile" and task.get("status") in {"queued", "running"}
+                task.get("type", "profile") == "profile"
+                and task.get("status") in {"queued", "running"}
                 and task.get("role_token") == self.engine.setup.state.get("token")
                 for task in self.tasks.values()
             )
@@ -590,12 +618,17 @@ class LifeViewAPI:
                 ready = ready and not generating
                 if status == "ok" and not ready:
                     status = (
-                        generation["status"] if generation["status"] in {"generating", "failed", "exhausted"} else "preparing"
+                        generation["status"]
+                        if generation["status"] in {"generating", "failed", "exhausted"}
+                        else "preparing"
                     )
                 visible = []
                 if ready:
                     for slot in day.get("actual", []):
-                        left, right = parse_local(slot["start"], self.engine.tz), parse_local(slot["end"], self.engine.tz)
+                        left, right = (
+                            parse_local(slot["start"], self.engine.tz),
+                            parse_local(slot["end"], self.engine.tz),
+                        )
                         if right <= start or left >= end:
                             continue
                         item = project_slot_rest(slot)
@@ -720,7 +753,8 @@ class LifeViewAPI:
                 (
                     task
                     for task in self.tasks.values()
-                    if task.get("type", "profile") == "profile" and task.get("status") in {"queued", "running"}
+                    if task.get("type", "profile") == "profile"
+                    and task.get("status") in {"queued", "running"}
                     and task.get("role_token") == self.engine.setup.state.get("token")
                 ),
                 None,
@@ -801,7 +835,10 @@ class LifeViewAPI:
         if not isinstance(task_id, str) or not re.fullmatch(r"[a-f0-9]{32}", task_id) or task_id not in self.tasks:
             raise ViewError("没有找到这项后台任务", 404)
         task = self.tasks[task_id]
-        if task.get("role_token") != self.engine.setup.state.get("token") or self.engine.setup.state.get("persona_id") != self.engine.setup.selected_id:
+        if (
+            task.get("role_token") != self.engine.setup.state.get("token")
+            or self.engine.setup.state.get("persona_id") != self.engine.setup.selected_id
+        ):
             raise ViewError("这项任务属于之前的生活记录，请刷新页面。", 404)
         return copy.deepcopy(
             {

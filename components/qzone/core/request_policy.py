@@ -26,8 +26,14 @@ class RequestPolicy:
     NETWORK_DELAYS = (60, 300, 900, 1800)
 
     def __init__(
-        self, store=None, account="", *, clock=None, sleeper=None,
-        read_interval=1.0, write_interval=5.0,
+        self,
+        store=None,
+        account="",
+        *,
+        clock=None,
+        sleeper=None,
+        read_interval=1.0,
+        write_interval=5.0,
     ):
         self.store = store
         self.key = "request_policy:" + str(account)
@@ -43,10 +49,11 @@ class RequestPolicy:
         self.failures = int(self._number(saved.get("failures")))
         self.last_http_at = self._number(saved.get("last_http_at"))
         self.last_write_at = self._number(saved.get("last_write_at"))
-        self.counts = {
-            str(key): int(self._number(value))
-            for key, value in (saved.get("counts") or {}).items()
-        } if isinstance(saved.get("counts"), dict) else {}
+        self.counts = (
+            {str(key): int(self._number(value)) for key, value in (saved.get("counts") or {}).items()}
+            if isinstance(saved.get("counts"), dict)
+            else {}
+        )
 
     @staticmethod
     def _number(value):
@@ -58,9 +65,12 @@ class RequestPolicy:
 
     def snapshot(self):
         return {
-            "retry_at": self.retry_at, "reason": self.reason,
-            "failures": self.failures, "last_http_at": self.last_http_at,
-            "last_write_at": self.last_write_at, "counts": dict(self.counts),
+            "retry_at": self.retry_at,
+            "reason": self.reason,
+            "failures": self.failures,
+            "last_http_at": self.last_http_at,
+            "last_write_at": self.last_write_at,
+            "counts": dict(self.counts),
         }
 
     def _save(self):

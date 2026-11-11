@@ -6,17 +6,18 @@ import re
 import unicodedata
 from datetime import timedelta
 
-from astrbot.api import logger as log
 from astrbot.api import AstrBotConfig
+from astrbot.api import logger as log
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.message_components import Plain
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, StarTools
 from astrbot.core.star.filter.command import GreedyStr
-from ...runtime import component_enabled
 
+from ...runtime import component_enabled
+from ..common.contracts import STATE_CACHE, VOICE_DELIVERY
 from .core.domain import PROFILE_FIELDS
-from .core.engine import LifeEngine, PROFILE_WARNING
+from .core.engine import PROFILE_WARNING, LifeEngine
 from .core.errors import describe_error, run_with_timeout, user_error
 from .core.image_input import collect_image_paths
 from .core.images import WardrobeImageStore
@@ -36,11 +37,15 @@ def _short_outfit_text(value, limit=60):
     for character in text:
         codepoint = ord(character)
         regional = 0x1F1E6 <= codepoint <= 0x1F1FF
-        continuation = (unicodedata.category(character).startswith("M") or character == "\u200d"
-                        or 0xFE00 <= codepoint <= 0xFE0F or 0xE0100 <= codepoint <= 0xE01EF
-                        or 0x1F3FB <= codepoint <= 0x1F3FF or 0xE0020 <= codepoint <= 0xE007F)
-        paired_flag = (regional and clusters and len(clusters[-1]) == 1
-                       and 0x1F1E6 <= ord(clusters[-1]) <= 0x1F1FF)
+        continuation = (
+            unicodedata.category(character).startswith("M")
+            or character == "\u200d"
+            or 0xFE00 <= codepoint <= 0xFE0F
+            or 0xE0100 <= codepoint <= 0xE01EF
+            or 0x1F3FB <= codepoint <= 0x1F3FF
+            or 0xE0020 <= codepoint <= 0xE007F
+        )
+        paired_flag = regional and clusters and len(clusters[-1]) == 1 and 0x1F1E6 <= ord(clusters[-1]) <= 0x1F1FF
         if clusters and (continuation or clusters[-1].endswith("\u200d") or paired_flag):
             clusters[-1] += character
         else:
@@ -60,7 +65,9 @@ class LifeSchedulerPlus:
 
     async def initialize(self):
         self.data_dir = StarTools.get_data_dir(PLUGIN_ID)
-        self.engine = LifeEngine(self.context, self.config, self.data_dir, native_settings_saved=self._native_settings_saved)
+        self.engine = LifeEngine(
+            self.context, self.config, self.data_dir, native_settings_saved=self._native_settings_saved
+        )
         self.wardrobe_images = WardrobeImageStore(self.data_dir / "wardrobe_images")
         self._register_life_view()
         if self.config.get("enabled", True):
@@ -95,11 +102,40 @@ class LifeSchedulerPlus:
             return str(event.get_sender_id()) in owners
         return bool(event.is_admin())
 
-    def get_current_state(self):
-        """Stable, independent snapshot for future photo/proactive/QZone modules."""
+    def get_current_state(self, event=None):
+        """Independent snapshot for the photo, proactive and QZone components.
+
+        With an ``event`` the snapshot is taken once per message and shared by
+        every caller handling that message (item 23); treat it as read-only.
+        """
         if not self.config.get("enabled", True) or not self.engine or self.engine.closed:
             return {}
-        return copy.deepcopy(self.engine.get_current_state())
+        if event is not None:
+            cached = event.get_extra(STATE_CACHE)
+            if isinstance(cached, dict):
+                return cached
+        state = copy.deepcopy(self.engine.get_current_state())
+        if event is not None:
+            event.set_extra(STATE_CACHE, state)
+        return state
+
+    # -- the user's own dated events (item 8) ------------------------------------
+    def user_events(self, umo: str) -> list[dict]:
+        if not self.config.get("enabled", True) or not self.engine or self.engine.closed:
+            return []
+        return copy.deepcopy(self.engine.user_events.list(str(umo), self.engine.now()))
+
+    async def set_user_event_status(self, umo: str, event_id: str, status: str) -> bool:
+        if not self.engine or self.engine.closed:
+            return False
+        async with self.engine.mutation_lock:
+            return self.engine.user_events.set_status(str(umo), str(event_id), status)
+
+    async def delete_user_event(self, umo: str, event_id: str) -> bool:
+        if not self.engine or self.engine.closed:
+            return False
+        async with self.engine.mutation_lock:
+            return self.engine.user_events.delete(str(umo), str(event_id))
 
     async def confirm_tell_delivered(self, *, expected_persona_id: str, expected_promise: dict) -> bool:
         """Complete one due tell from a snapshot after its content was sent."""
@@ -130,7 +166,10 @@ class LifeSchedulerPlus:
             if self.config.get("inject_as_temp", True):
                 try:
                     from astrbot.core.agent.message import TextPart
-                    if not callable(getattr(TextPart, "mark_as_temp", None)) or not hasattr(req, "extra_user_content_parts"):
+
+                    if not callable(getattr(TextPart, "mark_as_temp", None)) or not hasattr(
+                        req, "extra_user_content_parts"
+                    ):
                         raise ImportError("temporary content unavailable")
                     req.extra_user_content_parts.append(TextPart(text=text).mark_as_temp())
                     return
@@ -144,8 +183,12 @@ class LifeSchedulerPlus:
 
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
         try:
-            if (self.engine and self.engine.life_ready() and self.engine.setup.owns(event.get_extra("life_plus_token", ""))
-                    and not event.get_extra("life_plus_command", False)):
+            if (
+                self.engine
+                and self.engine.life_ready()
+                and self.engine.setup.owns(event.get_extra("life_plus_token", ""))
+                and not event.get_extra("life_plus_command", False)
+            ):
                 text = getattr(resp, "completion_text", "")
                 if isinstance(text, str) and text.strip():
                     event.set_extra("life_plus_reply", text)
@@ -169,13 +212,18 @@ class LifeSchedulerPlus:
     async def on_llm_tool_respond(self, event: AstrMessageEvent, tool, tool_args, tool_result):
         """Consume event-local success receipts; tool arguments prove no delivery."""
         try:
-            receipts = event.get_extra("life_voice_delivery_v1", [])
+            receipts = event.get_extra(VOICE_DELIVERY, [])
             if not isinstance(receipts, list):
                 raise ValueError("语音交付收据必须是数组")
             for receipt in receipts:
-                if (not isinstance(receipt, dict) or not isinstance(receipt.get("id"), str) or not receipt["id"]
-                        or not isinstance(receipt.get("text"), str) or not receipt["text"].strip()
-                        or receipt.get("medium") not in {"voice", "text"}):
+                if (
+                    not isinstance(receipt, dict)
+                    or not isinstance(receipt.get("id"), str)
+                    or not receipt["id"]
+                    or not isinstance(receipt.get("text"), str)
+                    or not receipt["text"].strip()
+                    or receipt.get("medium") not in {"voice", "text"}
+                ):
                     raise ValueError("语音交付收据字段无效")
                 await self._enqueue_delivered(event, receipt["text"].strip(), receipt_id=receipt["id"])
         except Exception as exc:
@@ -184,9 +232,15 @@ class LifeSchedulerPlus:
     async def _enqueue_delivered(self, event, reply, receipt_id=None):
         if not await component_enabled(self.context, PLUGIN_ID, str(event.unified_msg_origin), event):
             return
-        if (not self.engine or self.engine.closed or event.get_extra("life_plus_command", False)
-                or not self.is_owner(event) or not self.config.get("chat_change_enabled", True)
-                or not self.engine.life_ready() or not self.engine.setup.owns(event.get_extra("life_plus_token", ""))):
+        if (
+            not self.engine
+            or self.engine.closed
+            or event.get_extra("life_plus_command", False)
+            or not self.is_owner(event)
+            or not self.config.get("chat_change_enabled", True)
+            or not self.engine.life_ready()
+            or not self.engine.setup.owns(event.get_extra("life_plus_token", ""))
+        ):
             return
         receipt_ids = event.get_extra("life_plus_voice_receipts", [])
         if receipt_id and receipt_id in receipt_ids:
@@ -198,26 +252,54 @@ class LifeSchedulerPlus:
             # A failed background registration must not retry an already-sent
             # line on the next tool hook, including failures after queue append.
             event.set_extra("life_plus_delivered_texts", [*texts, reply])
-            self.engine.enqueue_chat(str(event.unified_msg_origin), event.get_extra("life_plus_user", event.message_str),
-                                     reply, missed_ids=event.get_extra("life_plus_missed", []))
+            self.engine.enqueue_chat(
+                str(event.unified_msg_origin),
+                event.get_extra("life_plus_user", event.message_str),
+                reply,
+                missed_ids=event.get_extra("life_plus_missed", []),
+            )
             event.set_extra("life_plus_missed", [])
 
     async def life(self, event: AstrMessageEvent, extra: GreedyStr = GreedyStr):
         """Life English command router, shared by both AstrBot command parsers."""
         text = self._argument(extra)
-        exact = {"": "show", "show": "show", "plan": "plan", "yesterday": "yesterday", "profile": "profile",
-                 "profile regen": "profile_regen", "profile ok": "profile_ok", "promise": "promise",
-                 "wardrobe show": "wardrobe_show", "wardrobe": "wardrobe_show"}
+        exact = {
+            "": "show",
+            "show": "show",
+            "plan": "plan",
+            "yesterday": "yesterday",
+            "profile": "profile",
+            "profile regen": "profile_regen",
+            "profile ok": "profile_ok",
+            "promise": "promise",
+            "wardrobe show": "wardrobe_show",
+            "wardrobe": "wardrobe_show",
+        }
         if text in exact:
             action, argument = exact[text], ""
         else:
-            prefixes = {"promise cancel": "promise_cancel", "wardrobe image": "wardrobe_image", "renew": "renew", "time": "time", "umo": "umo"}
-            found = next(((prefix, action) for prefix, action in prefixes.items() if text == prefix or text.startswith(prefix + " ")), None)
+            prefixes = {
+                "promise cancel": "promise_cancel",
+                "wardrobe image": "wardrobe_image",
+                "renew": "renew",
+                "time": "time",
+                "umo": "umo",
+            }
+            found = next(
+                (
+                    (prefix, action)
+                    for prefix, action in prefixes.items()
+                    if text == prefix or text.startswith(prefix + " ")
+                ),
+                None,
+            )
             if not found:
-                yield event.plain_result("用法：life show / plan / renew / yesterday / profile [regen|ok] / promise [cancel] / wardrobe [show|image] / time / umo")
+                yield event.plain_result(
+                    "用法：life show / plan / renew / yesterday / profile [regen|ok] / promise [cancel] / wardrobe [show|image] / time / umo"
+                )
                 return
             prefix, action = found
-            argument = text[len(prefix):].strip()
+            argument = text[len(prefix) :].strip()
         async for result in self._dispatch(event, action, argument):
             yield result
 
@@ -253,9 +335,6 @@ class LifeSchedulerPlus:
         async for result in self._dispatch(event, "profile_ok"):
             yield result
 
-
-
-
     async def life_promise(self, event: AstrMessageEvent):
         async for result in self._dispatch(event, "promise"):
             yield result
@@ -263,7 +342,6 @@ class LifeSchedulerPlus:
     async def life_promise_cancel(self, event: AstrMessageEvent, extra: GreedyStr = GreedyStr):
         async for result in self._dispatch(event, "promise_cancel", self._argument(extra)):
             yield result
-
 
     async def wardrobe_show(self, event: AstrMessageEvent):
         async for result in self._dispatch(event, "wardrobe_show"):
@@ -301,15 +379,22 @@ class LifeSchedulerPlus:
             text += "\n" + outfit["label"] + "：" + description + "（" + outfit["source_label"] + "）"
         if day.get("outfit_notes"):
             text += "\n补充：" + _short_outfit_text(day["outfit_notes"])
-        text += "\n" + format_timeline(day.get("plan" if plan else "actual", []), now=None if yesterday else self.engine.now(),
-                                       outfit_label=lambda slot: slot_outfit_label(slot, day))
+        text += "\n" + format_timeline(
+            day.get("plan" if plan else "actual", []),
+            now=None if yesterday else self.engine.now(),
+            outfit_label=lambda slot: slot_outfit_label(slot, day),
+        )
         if day.get("day_summary"):
             text += "\n概况：" + day["day_summary"]
         events = self.engine.events.active(parse_local(day["date"] + "T12:00", self.engine.tz).date())
         if events:
-            text += "\n进行中的事件：" + "；".join(str(item.get("title", "")) + "（" + str(item.get("end_date", "")) + "结束）" for item in events)
+            text += "\n进行中的事件：" + "；".join(
+                str(item.get("title", "")) + "（" + str(item.get("end_date", "")) + "结束）" for item in events
+            )
         if day.get("changes") and not plan:
-            text += "\n今天的变化：\n" + "\n".join(str(item.get("time", ""))[11:16] + " " + str(item.get("description", "")) for item in day["changes"])
+            text += "\n今天的变化：\n" + "\n".join(
+                str(item.get("time", ""))[11:16] + " " + str(item.get("description", "")) for item in day["changes"]
+            )
         if yesterday and day.get("recap"):
             text += "\n昨日回顾：" + day["recap"]
         return text
@@ -344,7 +429,9 @@ class LifeSchedulerPlus:
                         message = self.engine.schedule_generation_state(day)["message"]
                     yield event.plain_result(prefix + message)
                     return
-                yield event.plain_result(prefix + self._day_text(day, plan=action == "plan", yesterday=action == "yesterday"))
+                yield event.plain_result(
+                    prefix + self._day_text(day, plan=action == "plan", yesterday=action == "yesterday")
+                )
             elif action == "renew":
                 yield event.plain_result(prefix + "正在重写当前时间之后的日程……")
                 images = await run_with_timeout(collect_image_paths(event), 30, "收集图片")
@@ -359,16 +446,43 @@ class LifeSchedulerPlus:
                         override = self.engine.wardrobe.resolve("穿搭" + match.group(1))
                         if not override:
                             raise ValueError("没有找到这套穿搭，请先查看衣柜")
-                        argument = "严格采用指定的外出穿搭：" + override["description"] + "；" + str(match.group(2) or "")
+                        argument = (
+                            "严格采用指定的外出穿搭：" + override["description"] + "；" + str(match.group(2) or "")
+                        )
                 day = await self.engine.generate(force=True, extra=argument, outfit_override=override)
                 yield event.plain_result(self._day_text(day))
             elif action == "profile":
-                labels = {"identity": "身份", "living": "居住", "routine_workday": "工作日作息", "routine_restday": "休息日作息", "weekly_fixed": "每周固定安排", "periodic": "周期事项", "vacations": "假期", "social_circle": "社交圈", "hobbies_places": "爱好与常去地点", "phone_habits": "手机习惯"}
+                labels = {
+                    "identity": "身份",
+                    "living": "居住",
+                    "routine_workday": "工作日作息",
+                    "routine_restday": "休息日作息",
+                    "weekly_fixed": "每周固定安排",
+                    "periodic": "周期事项",
+                    "vacations": "假期",
+                    "social_circle": "社交圈",
+                    "hobbies_places": "爱好与常去地点",
+                    "phone_habits": "手机习惯",
+                }
                 profile = self.config.get("profile", {})
-                yield event.plain_result(prefix + "生活档案\n" + "\n".join(labels[key] + "：" + str(profile.get(key, "") or "（未填写）") for key in PROFILE_FIELDS) +
-                                         "\n人设状态：" + ("正文已更新，生活资料保留" if self.engine.persona_changed else "已确认" if self.config.get("profile_persona_hash") else "等待生成档案") +
-                                         "\n" + self.engine.profile_generation_state()["message"] +
-                                         ("\n" + self.engine.llm.persona_warning if self.engine.llm.persona_warning else ""))
+                yield event.plain_result(
+                    prefix
+                    + "生活档案\n"
+                    + "\n".join(
+                        labels[key] + "：" + str(profile.get(key, "") or "（未填写）") for key in PROFILE_FIELDS
+                    )
+                    + "\n人设状态："
+                    + (
+                        "正文已更新，生活资料保留"
+                        if self.engine.persona_changed
+                        else "已确认"
+                        if self.config.get("profile_persona_hash")
+                        else "等待生成档案"
+                    )
+                    + "\n"
+                    + self.engine.profile_generation_state()["message"]
+                    + ("\n" + self.engine.llm.persona_warning if self.engine.llm.persona_warning else "")
+                )
             elif action == "profile_regen":
                 task = self.engine.ensure_profile_background(force=True)
                 if task is None:
@@ -376,7 +490,9 @@ class LifeSchedulerPlus:
                     return
                 yield event.plain_result(prefix + "生活档案正在生成中，完成后会显示结果。")
                 success = await asyncio.shield(task)
-                yield event.plain_result("生活档案已更新并保存。" if success else self.engine.profile_generation_state()["message"])
+                yield event.plain_result(
+                    "生活档案已更新并保存。" if success else self.engine.profile_generation_state()["message"]
+                )
             elif action == "profile_ok":
                 await self.engine.confirm_profile()
                 yield event.plain_result("已确认当前档案，人设变化提醒已清除。")
@@ -387,8 +503,20 @@ class LifeSchedulerPlus:
                 labels = {"pending": "未完成", "fulfilled": "已完成", "missed": "已失约", "cancelled": "已取消"}
                 for index, item in enumerate(self.engine.promises.all(), 1):
                     ended = item.get("ended_at") or item.get("created_at")
-                    if item["status"] == "pending" or (item["status"] in {"fulfilled", "missed"} and parse_local(ended, self.engine.tz) >= now - timedelta(days=7)):
-                        lines.append(str(index) + ". " + item["content"] + "｜" + str(item.get("due") or "无具体时间") + "｜" + labels.get(item["status"], item["status"]) + ("｜" + item["note"] if item.get("note") else ""))
+                    if item["status"] == "pending" or (
+                        item["status"] in {"fulfilled", "missed"}
+                        and parse_local(ended, self.engine.tz) >= now - timedelta(days=7)
+                    ):
+                        lines.append(
+                            str(index)
+                            + ". "
+                            + item["content"]
+                            + "｜"
+                            + str(item.get("due") or "无具体时间")
+                            + "｜"
+                            + labels.get(item["status"], item["status"])
+                            + ("｜" + item["note"] if item.get("note") else "")
+                        )
                 yield event.plain_result(prefix + ("\n".join(lines) or "没有未完成或最近七天完成、失约的约定。"))
             elif action == "promise_cancel":
                 item = self.engine.promises.cancel(argument, self.engine.now())
@@ -467,7 +595,8 @@ class LifeSchedulerPlus:
             if self.is_owner(event):
                 pending = [
                     f"{item['content']}（{item.get('due') or '无具体时间'}）"
-                    for item in self.engine.promises.all() if item.get("status") == "pending"
+                    for item in self.engine.promises.all()
+                    if item.get("status") == "pending"
                 ]
                 if pending:
                     text += "\n待办约定：" + "；".join(pending)
@@ -486,7 +615,6 @@ class LifeSchedulerPlus:
         except Exception as exc:
             log.warning("衣柜列表工具失败：%s", describe_error(exc))
             return "衣柜读取失败。"
-
 
     async def llm_wardrobe_remove(self, event: AstrMessageEvent, query: str) -> str:
         """按主人要求删除一套穿搭，先列出衣柜核对编号。
@@ -524,7 +652,13 @@ class LifeSchedulerPlus:
             entry = self.engine.wardrobe.resolve(query)
             if not entry:
                 return "没有找到唯一匹配的穿搭。"
-            normalized = await self.engine.llm.describe_outfit([], "按要求修改，保留其他穿戴细节，明确赤足等约束。原方案：" + entry["description"] + "\n修改：" + instruction)
+            normalized = await self.engine.llm.describe_outfit(
+                [],
+                "按要求修改，保留其他穿戴细节，明确赤足等约束。原方案："
+                + entry["description"]
+                + "\n修改："
+                + instruction,
+            )
             async with self.engine.config_lock:
                 self.engine.setup.assert_owner(event.get_extra("life_plus_token", ""))
                 current = self.engine.wardrobe.resolve(entry["id"])

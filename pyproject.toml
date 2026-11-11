@@ -1,0 +1,30 @@
+# 仅用于开发：代码检查、格式化和测试。AstrBot 安装插件时不读取本文件。
+[project]
+name = "astrbot_plugin_life"
+version = "1.4.4"
+requires-python = ">=3.10"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = ["components/qzone/vendor", "pages"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # 中文全角标点是有意写的
+    "RUF005", "RUF007", "SIM102", "SIM103", "SIM105", "SIM108", "SIM117", "UP031",  # 写法偏好
+    "B023",  # 循环里的闭包都是当场调用
+    "B904", "B905",
+    "ASYNC240",  # 只读写很小的本地文件
+]
+
+[tool.ruff.lint.isort]
+known-third-party = ["astrbot", "mcp"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"

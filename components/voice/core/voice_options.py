@@ -31,9 +31,7 @@ async def _personal_voices(catalog: BreezeVoiceCatalog, api_key: str) -> list[di
         page += 1
 
 
-async def populate_voice_options(
-    schema: dict, settings: Settings, catalog: BreezeVoiceCatalog
-) -> str:
+async def populate_voice_options(schema: dict, settings: Settings, catalog: BreezeVoiceCatalog) -> str:
     """Change display metadata only; never replace a saved voice or credential."""
     field = schema["voice_id"]
     field.update(options=[""], labels=["请选择音色"])

@@ -8,18 +8,51 @@ import math
 from datetime import datetime
 
 import aiohttp
-
 from astrbot.api import logger
 
 from .errors import describe_error
 
 SOUTH_REGIONS = (
-    "广东", "广州", "深圳", "福建", "泉州", "厦门", "浙江", "杭州", "江苏", "上海", "湖南", "湖北",
-    "江西", "四川", "重庆", "云南", "贵州", "广西", "海南", "港澳台",
+    "广东",
+    "广州",
+    "深圳",
+    "福建",
+    "泉州",
+    "厦门",
+    "浙江",
+    "杭州",
+    "江苏",
+    "上海",
+    "湖南",
+    "湖北",
+    "江西",
+    "四川",
+    "重庆",
+    "云南",
+    "贵州",
+    "广西",
+    "海南",
+    "港澳台",
 )
 NORTH_REGIONS = (
-    "北京", "天津", "河北", "山西", "内蒙", "辽宁", "吉林", "黑龙江", "山东", "河南", "陕西", "甘肃",
-    "青海", "宁夏", "新疆", "东北", "华北", "西北",
+    "北京",
+    "天津",
+    "河北",
+    "山西",
+    "内蒙",
+    "辽宁",
+    "吉林",
+    "黑龙江",
+    "山东",
+    "河南",
+    "陕西",
+    "甘肃",
+    "青海",
+    "宁夏",
+    "新疆",
+    "东北",
+    "华北",
+    "西北",
 )
 WMO_ZH = {
     0: "晴",
@@ -126,7 +159,9 @@ class WeatherService:
 
     def matches_location(self, weather):
         city = str(self.settings.get("city", "") or "").strip()
-        return isinstance(weather, dict) and str(weather.get("fallback_from") or weather.get("city", city)).strip() == city
+        return (
+            isinstance(weather, dict) and str(weather.get("fallback_from") or weather.get("city", city)).strip() == city
+        )
 
     def using_fallback(self):
         return any(
@@ -146,13 +181,16 @@ class WeatherService:
         try:
             self.store.write("weather_cache.json", self._cache)
         except OSError as exc:
-            logger.warning("天气位置缓存保存失败，将按新城市重新查询：%s", describe_error(exc))
+            logger.warning("[生活日程] 天气位置缓存保存失败，将按新城市重新查询：%s", describe_error(exc))
 
     def remember_ai(self, weather: dict) -> None:
         """Retain a generated same-location forecast through later network failures."""
         if not isinstance(weather, dict) or not str(weather.get("summary", "") or "").strip():
             return
-        if str(weather.get("city", self.settings.get("city", "")) or "").strip() != str(self.settings.get("city", "") or "").strip():
+        if (
+            str(weather.get("city", self.settings.get("city", "")) or "").strip()
+            != str(self.settings.get("city", "") or "").strip()
+        ):
             return
         weather = copy.deepcopy(weather)
         weather.update(source="ai", weather_source="ai", location_signature=self._location_signature())
@@ -215,9 +253,11 @@ class WeatherService:
                         try:
                             self.store.write("weather_cache.json", self._cache)
                         except OSError as exc:
-                            logger.warning("天气坐标缓存保存失败，本次继续查询真实天气：%s", describe_error(exc))
+                            logger.warning(
+                                "[生活日程] 天气坐标缓存保存失败，本次继续查询真实天气：%s", describe_error(exc)
+                            )
                         if fallback and (city, target) not in self._reported_fallbacks:
-                            logger.info("查不到天气城市 %s，已换为 %s 的真实天气", city, target)
+                            logger.info("[生活日程] 查不到天气城市 %s，已换为 %s 的真实天气", city, target)
                             self._reported_fallbacks.add((city, target))
                     return coordinates
             if revision != self._location_revision or city != str(self.settings.get("city", "") or "").strip():
@@ -225,8 +265,7 @@ class WeatherService:
         attempted = "、".join(attempted)
         if errors:
             reasons = "；".join(
-                name + "：" + describe_error(error, operation="城市查询", timeout_seconds=10)
-                for name, error in errors
+                name + "：" + describe_error(error, operation="城市查询", timeout_seconds=10) for name, error in errors
             )
             raise ValueError("查询天气城市失败：" + city + "（已尝试 " + attempted + "）；" + reasons) from errors[-1][
                 1
@@ -241,7 +280,7 @@ class WeatherService:
             try:
                 persona = str(await self.persona_provider() or "")
             except Exception as exc:
-                logger.warning("读取天气参考地域失败，先参考生活档案：%s", describe_error(exc))
+                logger.warning("[生活日程] 读取天气参考地域失败，先参考生活档案：%s", describe_error(exc))
         # Latest explicit geography takes priority over historical living data.
         for description in (persona, living):
             south = any(word in description for word in SOUTH_REGIONS)
@@ -304,21 +343,28 @@ class WeatherService:
                 try:
                     self.store.write("weather_cache.json", self._cache)
                 except OSError as exc:
-                    logger.warning("天气缓存保存失败，本次使用已取得的真实天气：%s", describe_error(exc))
+                    logger.warning("[生活日程] 天气缓存保存失败，本次使用已取得的真实天气：%s", describe_error(exc))
                 return self.cached(now)
             except Exception as exc:
                 logger.warning(
-                    "天气更新失败，保留缓存并等待下次更新：%s",
+                    "[生活日程] 天气更新失败，保留缓存并等待下次更新：%s",
                     describe_error(exc, operation="天气请求", timeout_seconds=10),
                 )
                 fallback = self.cached(now)
                 if signature != self._location_signature() or revision != self._location_revision:
                     return fallback
-                if (self.settings.get("city") and fallback.get("source") == "ai"
-                        and "待按季节" in str(fallback.get("summary", ""))):
+                if (
+                    self.settings.get("city")
+                    and fallback.get("source") == "ai"
+                    and "待按季节" in str(fallback.get("summary", ""))
+                ):
                     # A failed real-weather request must never ask the model to invent a forecast.
-                    fallback.update(summary="天气暂时获取失败，稍后自动重试", source="unavailable", weather_source="unavailable",
-                                    location_signature=signature)
+                    fallback.update(
+                        summary="天气暂时获取失败，稍后自动重试",
+                        source="unavailable",
+                        weather_source="unavailable",
+                        location_signature=signature,
+                    )
                     coordinates = self._cache.get("coordinates", {})
                     if self.matches_location(coordinates) and coordinates.get("fallback_from"):
                         fallback.update(city=coordinates["city"], fallback_from=coordinates["fallback_from"])
@@ -326,7 +372,7 @@ class WeatherService:
                     try:
                         self.store.write("weather_cache.json", self._cache)
                     except OSError as cache_exc:
-                        logger.warning("天气状态缓存保存失败：%s", describe_error(cache_exc))
+                        logger.warning("[生活日程] 天气状态缓存保存失败：%s", describe_error(cache_exc))
                 elif fallback.get("source") not in ("ai", "unavailable"):
                     fallback["source"] = "cache"
                 return fallback

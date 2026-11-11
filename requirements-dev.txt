@@ -1,0 +1,6 @@
+# 只用于开发和测试，AstrBot 安装插件时不会读取本文件。
+-r requirements.txt
+pytest>=8
+pytest-asyncio>=0.23
+ruff>=0.6
+packaging

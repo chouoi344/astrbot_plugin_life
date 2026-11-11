@@ -23,7 +23,7 @@
       },
       "owner_ids": {
         "description": "主人用户 ID",
-        "hint": "QQ 个人号填主人 QQ 号；QQ 官方机器人在私聊发送 /sid，复制返回的 UID（该用户的 OpenID）。留空使用 AstrBot 管理员。其他人的聊天仅读取状态。",
+        "hint": "QQ 个人号填主人 QQ 号；机器人则给对话框发送/sid，获得后填入UID即可。",
         "type": "list",
         "default": []
       },
@@ -87,7 +87,7 @@
       },
       "default_reference_umo": {
         "description": "主人的聊天来源（UID）",
-        "hint": "在目标 QQ 个人号或 QQ 官方机器人私聊发送「参考会话 set」。参考会话用于识别你们的约定、接续聊天话题；没有可用参考会话时，日程照常使用全局模型。",
+        "hint": "在目标 QQ 个人号或 QQ 官方机器人发送UID，之后填入UMO即可",
         "type": "string",
         "default": ""
       },
@@ -131,7 +131,7 @@
       },
       "change_trigger_keywords": {
         "description": "聊天改日程的初筛关键词",
-        "hint": "命中关键词、时间表达或语音约定后才使用判断模型；即时想听语音本身不触发。",
+        "hint": "命中关键词、时间表达或语音约定后才使用判断模型；即时想听语音本身不触发。私聊对象提到的面试、考试、看病等有时间的事，也会靠这些词识别，记下后角色会在事后关心一句。",
         "type": "list",
         "default": [
           "今晚",
@@ -159,7 +159,13 @@
           "周末",
           "下周",
           "提醒",
-          "语音约定"
+          "语音约定",
+          "面试",
+          "考试",
+          "看病",
+          "体检",
+          "出差",
+          "答辩"
         ]
       },
       "forbidden_interactions": {
@@ -376,7 +382,7 @@
         "description": "启用文生图",
         "type": "bool",
         "default": true,
-        "hint": "2–4 张组照可能超过 AstrBot 默认工具等待时间。若同步等待组照经常超时，可把工具调用超时调到 1800 秒；后台任务无需一直等待，单张通常无需因此调整。"
+        "hint": "2–4 张组照可能超过 AstrBot 默认工具等待时间。若同步等待组照经常超时，可把工具调用超时调到 600 秒；后台任务无需一直等待，单张通常无需因此调整。"
       },
       "edit_enabled": {
         "description": "启用改图",
@@ -399,10 +405,16 @@
         "default": [],
         "invisible": true
       },
+      "base_url_migrated": {
+        "description": "旧默认地址已迁移",
+        "type": "bool",
+        "default": false,
+        "invisible": true
+      },
       "base_url": {
         "description": "生图服务地址",
         "type": "string",
-        "default": "",
+        "default": "https://choupi.tech/v1/images/generations",
         "hint": "填写支持 OpenAI Images 的服务地址。"
       },
       "api_keys": {
@@ -415,6 +427,12 @@
         "type": "string",
         "default": "",
         "hint": "建议填 gpt-image 系列，需要支持多张参考图。"
+      },
+      "image_size": {
+        "description": "照片尺寸",
+        "type": "string",
+        "default": "2K",
+        "hint": "可以只填比例（如 3:4）、只填清晰度（1K、2K、4K）、两者都填（如 3:4 2K），或直接填像素（如 1536x2048）。默认 2K、竖版 3:4。生图服务不接受时会自动降一档重试。"
       }
     }
   },
@@ -427,11 +445,17 @@
         "type": "bool",
         "default": true
       },
+      "base_url_migrated": {
+        "description": "旧默认地址已迁移",
+        "type": "bool",
+        "default": false,
+        "invisible": true
+      },
       "base_url": {
         "description": "语音服务 URL",
         "type": "string",
-        "default": "https://api.breeze.blue",
-        "hint": "填写兼容当前语音接口的服务地址，可带 /v1；保存后重新打开设置选择音色。"
+        "default": "https://choupi.tech",
+        "hint": "填写兼容当前语音接口的服务地址，可带 /v1；保存后重新打开设置选择音色。（此URL为中转站的，并非官方）"
       },
       "api_key": {
         "description": "语音 API Key",
@@ -462,33 +486,62 @@
         "type": "bool",
         "default": false
       },
-      "target_session": {
-        "description": "要接管的私聊",
-        "hint": "在目标 QQ 个人号或 QQ 官方机器人私聊发送 /sid，粘贴返回的完整编号。保存后发一句普通消息，插件会自动识别机器人账号。一次设置一条私聊。",
-        "type": "string",
-        "default": ""
+      "target_sessions": {
+        "description": "目标私聊",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "hint": "在目标 QQ 个人号或 QQ 官方机器人私聊里发送 /sid，把返回的完整编号（平台ID:FriendMessage:对方ID）逐条添加。可以添加多条，每条私聊的主动消息时间、未回复次数和每日次数各自独立计算。保存后在每条私聊里发一句普通消息，插件会自动识别机器人账号。"
       },
-      "busy_enabled": {
-        "description": "忙时暂存，空闲后回复",
-        "type": "bool",
-        "default": true
+      "target_session": {
+        "description": "旧版目标私聊（已改为上面的列表）",
+        "type": "string",
+        "default": "",
+        "invisible": true,
+        "hint": "v1.3.11 的单条设置，升级时自动并入“目标私聊”列表。"
       },
       "proactive_enabled": {
-        "description": "空闲时有话题再主动开口",
+        "description": "主动找对方聊天",
         "type": "bool",
         "default": true
       },
-      "daily_max": {
-        "description": "每天最多主动联系轮数",
+      "min_interval_minutes": {
+        "description": "主动消息最短间隔（分钟）",
         "type": "int",
-        "default": 5,
-        "hint": "同一轮的文字分段、语音或照片只计一轮。正常聊天和忙完补回不计入，最小为 1。"
+        "default": 60,
+        "hint": "对方每发一条消息、或角色每主动发完一条，都从那一刻起在最短和最长间隔之间随机挑下一次想起对方的时间。"
+      },
+      "max_interval_minutes": {
+        "description": "主动消息最长间隔（分钟）",
+        "type": "int",
+        "default": 90,
+        "hint": "不能小于最短间隔。"
+      },
+      "quiet_hours_enabled": {
+        "description": "免打扰时段",
+        "type": "bool",
+        "default": true,
+        "hint": "免打扰时段内不发随机的主动消息，挑到的时间落在这里会重新挑。对方亲口要求的提醒（例如“明早 6 点叫我”）不受限制。"
+      },
+      "quiet_hours": {
+        "description": "免打扰时间",
+        "type": "string",
+        "default": "1-7",
+        "hint": "按整点填写，例如 1-7 表示 1 点到 7 点；可以填多段，用逗号或顿号隔开，例如 23-7，12-13；开始比结束晚表示跨过午夜。"
       },
       "max_unanswered": {
         "description": "连续未回复上限",
         "type": "int",
         "default": 2,
-        "hint": "优先跟随当天日程的人设安排（1 到 4 次）；日程没有提供时使用此值。达到上限后暂停主动联系，收到新消息后重新计数。"
+        "hint": "角色连续主动发了这么多条、对方都没回，就停下来等对方。对方一回复就重新计数。填 0 表示不限制。"
+      },
+      "daily_max": {
+        "description": "每天最多主动联系次数",
+        "type": "int",
+        "default": 5,
+        "hint": "同一次的文字分段、语音或照片只算一次。正常聊天不计入；对方亲口要求的提醒不计入。最小为 1。"
       },
       "voice_enabled": {
         "description": "允许主动发语音",
@@ -506,40 +559,25 @@
         "description": "每天最多主动发送照片次数",
         "type": "int",
         "default": 1,
-        "hint": "带照片的主动联系也算一轮。填 0 时当天不会主动发照片，正常聊天和补回时的照片不计入。"
+        "hint": "带照片的主动联系也只算一次联系。填 0 时当天不会主动发照片；正常聊天里的照片不计入。"
+      },
+      "history_count": {
+        "description": "主动消息参考的聊天条数",
+        "type": "int",
+        "default": 20,
+        "hint": "想主动开口时，参考这条私聊最近多少条消息（0 到 200，0 表示不参考）。还没有平台消息记录时，改为参考对话历史。"
+      },
+      "hold_hours": {
+        "description": "“等我忙完找你”最多等几小时",
+        "type": "float",
+        "default": 6,
+        "hint": "对方说了“等我忙完找你”之类的话后，角色先不主动打扰；超过这个时长对方还没来，角色可以自然问一句，每次只问一回。"
       },
       "proactive_prompt": {
         "description": "主动聊天提示词",
         "type": "text",
-        "default": "你正处在自己真实运转的生活节奏中，此刻主动联系对方。请完全以你的人设性格、说话习惯与双方关系自然开口，展现出你有自己正在忙的事、当下的情绪温度或突然起意的主体性：优先从手头刚忙完的细节、眼前的生活切片、突然想起的某个具体话头或随口逗弄切入，严禁发送“在吗”“在干嘛呢”“注意休息/早点睡”等毫无灵魂的客服式问候或查岗，严禁出现“这笔账先记下/留着以后算”等记账体套话。若选择发文字（medium为text），严格遵守单行零空格、零换行与日常零逗号短句规则（普通分享用1~3个句号/问号短句；若吐槽翻车、讲趣事或情绪上头1~3句说不完，直接用句号/问号拆成4~6个零逗号短句连发）；若当前手头占着、在走动、刚睡醒或适合用声音传达而选择发语音（medium为voice），则切换为句内带逗号自然换气的一整句连贯口语并搭配1~2个声音标签。先结合最近聊天怎么收尾、当前时间与你的生活状态判断此刻是否适合打扰：若双方刚道过晚安、约定稍后再聊、话已聊透且无新生活进展，或当前状态不便联系，请直接选择 skip 保持安静；不要把同一次忙碌、集合、出发、训练、会议或未回复拆成多条连续汇报，也绝不追问对方为什么没回。",
-        "invisible": true
-      },
-      "attention_chance": {
-        "description": "轻忙时注意到连发消息的概率（备用）",
-        "type": "float",
-        "default": 0.35,
-        "invisible": true,
-        "hint": "优先跟随当天日程中的角色性格与状态；日程没有提供时才使用此值，范围 0 到 1。"
-      },
-      "reply_delay_min_seconds": {
-        "description": "刚空闲时最短等多久再回复（秒）",
-        "type": "int",
-        "default": 8,
-        "invisible": true,
-        "hint": "有积压消息时，在最短与最长时间之间随机等待；同一段空闲只等待一次。"
-      },
-      "reply_delay_max_seconds": {
-        "description": "刚空闲时最长等多久再回复（秒）",
-        "type": "int",
-        "default": 45,
-        "invisible": true,
-        "hint": "应大于或等于最短等待时间。等待时收到的新消息会一起处理。"
-      },
-      "silence_minutes": {
-        "description": "私聊安静多久后考虑新话题（分钟）",
-        "type": "float",
-        "default": 5,
-        "hint": "填 0 关闭。还需要角色当前有空、今天有尚未聊过的新生活内容，才会考虑主动联系。"
+        "default": "",
+        "hint": "留空时使用插件内置的默认提示词。只写你想补充或替换的要求即可；输出格式等规则由插件另外附上，不需要写。"
       }
     }
   },
@@ -558,6 +596,12 @@
         "hint": "跟着角色的日程分享自拍、食物或场景；没有合适的内容时，可以少发或不发。",
         "type": "bool",
         "default": true
+      },
+      "use_private_context": {
+        "description": "说说参考私聊和记忆",
+        "hint": "默认关闭。说说对所有 QQ 好友公开；打开后，自己分享日常时会参考你们最近的私聊和 LivingMemory 记忆来写配文，可能把私聊里的事写进公开说说。关闭时只用角色自己的日程和生活。",
+        "type": "bool",
+        "default": false
       },
       "daily_post_limit": {
         "description": "每天最多自己发几条",

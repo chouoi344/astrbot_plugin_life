@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from ....runtime import PHOTO_ID, QZONE_ID, SCHEDULE_ID, component_enabled, get_component
+from ...common.compat import disabled_once
+from ...common.persona import PersonaResultError, current_conversation, selected_persona
 from ...schedule.core.engine import UNRECORDED_ACTIVITY
 from ...schedule.core.timeline import format_timeline, parse_local, project_slot_rest
 
@@ -48,9 +50,7 @@ async def space_session_enabled(context, umo, event=None) -> bool:
     from astrbot.api import sp
 
     umo = str(umo)
-    services = await sp.get_async(
-        scope="umo", scope_id=umo, key="session_service_config", default={}
-    )
+    services = await sp.get_async(scope="umo", scope_id=umo, key="session_service_config", default={})
     if not isinstance(services, dict):
         raise IntegrationIncompatible("AstrBot 会话设置格式不兼容")
     if services.get("session_enabled") is not None and not services["session_enabled"]:
@@ -66,9 +66,7 @@ def schedule_peer(context):
 
 
 def schedule_generating(engine):
-    return engine.generation_lock.locked() or (
-        engine.generation_task is not None and not engine.generation_task.done()
-    )
+    return engine.generation_lock.locked() or (engine.generation_task is not None and not engine.generation_task.done())
 
 
 def find_plugin(context: Any, plugin_id: str) -> Any:
@@ -94,6 +92,34 @@ def _peer_module(peer: Any, suffix: str) -> Any:
         return importlib.import_module(f"{package}.{suffix}")
     except ImportError as exc:
         raise IntegrationIncompatible(f"依赖插件缺少兼容接口：{suffix}") from exc
+
+
+_MEMORY_MODULES = {
+    "core.memory_scope": ("is_event_memory_allowed", "resolve_memory_scope"),
+    "core.utils": ("sp",),
+}
+_MEMORY_ENGINE_METHODS = ("add_memory", "search_memories")
+
+
+def memory_interface_issue(peer: Any) -> str:
+    """Describe the first missing LivingMemory internal this bridge relies on."""
+    if getattr(peer, "config_manager", None) is None:
+        return "缺少 config_manager"
+    for suffix, names in _MEMORY_MODULES.items():
+        try:
+            module = _peer_module(peer, suffix)
+        except IntegrationIncompatible:
+            return f"缺少模块 {suffix}"
+        missing = [name for name in names if not hasattr(module, name)]
+        if missing:
+            return f"{suffix} 缺少 {'、'.join(missing)}"
+    initializer = peer.initializer
+    missing = [name for name in _MEMORY_ENGINE_METHODS if not callable(getattr(initializer.memory_engine, name, None))]
+    if missing:
+        return f"记忆引擎缺少 {'、'.join(missing)}"
+    if not callable(getattr(initializer.memory_processor, "build_memory_from_structured_data", None)):
+        return "记忆处理器缺少 build_memory_from_structured_data"
+    return ""
 
 
 def _value(event: Any, name: str) -> str:
@@ -149,9 +175,7 @@ class Integrations:
         getter = getattr(storage, "get_async", None)
         if not callable(getter):
             raise IntegrationIncompatible("AstrBot 缺少会话人格读取接口")
-        services = await _await(getter(
-            scope="umo", scope_id=umo, key="session_service_config", default={}
-        ))
+        services = await _await(getter(scope="umo", scope_id=umo, key="session_service_config", default={}))
         if not isinstance(services, dict):
             raise IntegrationIncompatible("AstrBot 会话设置格式不兼容")
         session_persona = services.get("persona_id")
@@ -191,26 +215,17 @@ class Integrations:
         manager = getattr(self.context, "persona_manager", None)
         if manager is None:
             raise DependencyUnavailable("AstrBot 人设管理器尚未就绪")
-        resolver = getattr(manager, "resolve_selected_persona", None)
-        if callable(resolver):
-            conversation_persona_id = None
-            conversations = self.context.conversation_manager
-            cid = await conversations.get_curr_conversation_id(umo)
-            if cid:
-                conversation = await conversations.get_conversation(umo, cid)
-                conversation_persona_id = getattr(conversation, "persona_id", None)
-            config = self.context.get_config(umo)
-            selected = await _await(
-                resolver(
-                    umo=umo,
-                    conversation_persona_id=conversation_persona_id,
+        if callable(getattr(manager, "resolve_selected_persona", None)):
+            conversation = await current_conversation(self.context, umo)
+            try:
+                persona_id, persona = await selected_persona(
+                    self.context,
+                    umo,
+                    conversation_persona_id=getattr(conversation, "persona_id", None),
                     platform_name=_value(event, "get_platform_name"),
-                    provider_settings=config.get("provider_settings", {}),
                 )
-            )
-            if not isinstance(selected, (tuple, list)) or len(selected) < 2:
-                raise IntegrationIncompatible("AstrBot 人设解析结果不兼容")
-            persona_id, persona = selected[:2]
+            except PersonaResultError as error:
+                raise IntegrationIncompatible(str(error)) from None
         else:
             peer = self._memory_peer()
             utils = _peer_module(peer, "core.utils")
@@ -242,27 +257,32 @@ class Integrations:
         if not current or not current["outfit"]:
             return {}
         timeline = []
-        recorded_at = parse_local(day["generation_started_at"], engine.tz) if day.get("generation_started_at") else start
+        recorded_at = (
+            parse_local(day["generation_started_at"], engine.tz) if day.get("generation_started_at") else start
+        )
         for slot in day["actual"]:
             a, b = parse_local(slot["start"], engine.tz), parse_local(slot["end"], engine.tz)
             if a < end and b > start:
                 item = project_slot_rest(slot)
-                timeline.append({
-                    "start": max(a, start).isoformat(),
-                    "end": min(b, end).isoformat(),
-                    "activity": (
-                        item["activity"] if item["activity"] not in
-                        {UNRECORDED_ACTIVITY, "等待更新后续安排"} else ""
-                    ),
-                    "location": item.get("location", ""),
-                    "rest_type": item["rest_type"],
-                    "phone": item.get("phone", ""),
-                    "mood": item.get("mood", ""),
-                    "mood_intensity": item.get("mood_intensity", ""),
-                    "actual_start": slot["start"],
-                    "actual_end": slot["end"],
-                    "after_recorded": recorded_at < b,
-                })
+                timeline.append(
+                    {
+                        "start": max(a, start).isoformat(),
+                        "end": min(b, end).isoformat(),
+                        "activity": (
+                            item["activity"]
+                            if item["activity"] not in {UNRECORDED_ACTIVITY, "等待更新后续安排"}
+                            else ""
+                        ),
+                        "location": item.get("location", ""),
+                        "rest_type": item["rest_type"],
+                        "phone": item.get("phone", ""),
+                        "mood": item.get("mood", ""),
+                        "mood_intensity": item.get("mood_intensity", ""),
+                        "actual_start": slot["start"],
+                        "actual_end": slot["end"],
+                        "after_recorded": recorded_at < b,
+                    }
+                )
         if not timeline:
             return {}
         return {
@@ -304,8 +324,11 @@ class Integrations:
             end = min(parse_local(raw["end"], engine.tz), business_end)
             if max(start, business_start).timestamp() <= now.timestamp() < end.timestamp():
                 slot = project_slot_rest(raw)
-                if (slot.get("phone") == "free" and slot["rest_type"] == "none"
-                        and slot["activity"] not in ("", UNRECORDED_ACTIVITY, "等待更新后续安排")):
+                if (
+                    slot.get("phone") == "free"
+                    and slot["rest_type"] == "none"
+                    and slot["activity"] not in ("", UNRECORDED_ACTIVITY, "等待更新后续安排")
+                ):
                     return start, end
                 return None
         return None
@@ -327,13 +350,19 @@ class Integrations:
         destination.parent.mkdir(parents=True, exist_ok=True)
         if photo_type == "selfie" and activity is None:
             metadata = await peer.generate_qzone_selfie(
-                event, prompt, destination=destination,
+                event,
+                prompt,
+                destination=destination,
                 before_generate=event.authorize_generation,
             )
         else:
             metadata = await peer.generate_qzone_photo(
-                event, prompt, photo_type=photo_type, activity=activity,
-                destination=destination, before_generate=event.authorize_generation,
+                event,
+                prompt,
+                photo_type=photo_type,
+                activity=activity,
+                destination=destination,
+                before_generate=event.authorize_generation,
             )
         path = Path(metadata["path"])
         if not path.is_file():
@@ -350,6 +379,11 @@ class Integrations:
             or getattr(initializer, "memory_processor", None) is None
         ):
             raise DependencyUnavailable("LivingMemory 正在初始化，记忆等待同步")
+        issue = memory_interface_issue(peer)
+        if issue:
+            # Only the QQ Space ↔ LivingMemory link stops; the rest keeps running.
+            disabled_once("QQ 空间的 LivingMemory 联动", issue)
+            raise IntegrationIncompatible(f"LivingMemory 接口不兼容：{issue}")
         return peer
 
     async def _check_session(self, event: Any, plugin_id: str, *, storage: Any = None) -> None:
@@ -362,12 +396,8 @@ class Integrations:
                 storage = importlib.import_module("astrbot.api").sp
             except (ImportError, AttributeError) as exc:
                 raise IntegrationIncompatible("无法读取 AstrBot 会话设置") from exc
-        services = await storage.get_async(
-            scope="umo", scope_id=umo, key="session_service_config", default={}
-        )
-        plugins = await storage.get_async(
-            scope="umo", scope_id=umo, key="session_plugin_config", default={}
-        )
+        services = await storage.get_async(scope="umo", scope_id=umo, key="session_service_config", default={})
+        plugins = await storage.get_async(scope="umo", scope_id=umo, key="session_plugin_config", default={})
         if not isinstance(services, dict) or not isinstance(plugins, dict):
             raise IntegrationIncompatible("AstrBot 会话设置格式不兼容")
         if services.get("session_enabled") is not None and not bool(services["session_enabled"]):
@@ -384,15 +414,11 @@ class Integrations:
         if aliases.intersection(str(item) for item in disabled):
             raise AccessDenied(f"{plugin_id} 在绑定会话中已停用")
 
-    async def resolve_binding(
-        self, event: Any, expected_persona_id: str | None = None
-    ) -> dict[str, Any]:
+    async def resolve_binding(self, event: Any, expected_persona_id: str | None = None) -> dict[str, Any]:
         peer = self._memory_peer()
         return await self._resolve_binding(peer, event, expected_persona_id)
 
-    async def _resolve_binding(
-        self, peer: Any, event: Any, expected_persona_id: str | None = None
-    ) -> dict[str, Any]:
+    async def _resolve_binding(self, peer: Any, event: Any, expected_persona_id: str | None = None) -> dict[str, Any]:
         scope_module = _peer_module(peer, "core.memory_scope")
         utils = _peer_module(peer, "core.utils")
         await self._check_session(event, QZONE_ID, storage=utils.sp)
@@ -515,7 +541,7 @@ class Integrations:
         if kind == "reply":
             reply = payload.get("reply") or {}
             reply_when = _time_label(reply.get("created_at") or payload.get("occurred_at"))
-            facts.append(f"{role}于{reply_when}实际回复这条评论：{str(reply.get('content') or '')}")
+            facts.append(f"{role}于{reply_when}实际回复这条评论：{reply.get('content') or ''!s}")
         return "\n".join(facts), facts
 
     @staticmethod
@@ -544,15 +570,9 @@ class Integrations:
             if kind == "delete":
                 for row in records:
                     metadata = _metadata(row)
-                    if (
-                        metadata.get("qzone_updated_by_delete_key") == key
-                        and metadata.get("previous_id") is not None
-                    ):
+                    if metadata.get("qzone_updated_by_delete_key") == key and metadata.get("previous_id") is not None:
                         replacements[str(metadata["previous_id"])] = int(row["id"])
-                    if (
-                        metadata.get("qzone_kind") == "delete"
-                        or metadata.get("qzone_post_status") == "deleted"
-                    ):
+                    if metadata.get("qzone_kind") == "delete" or metadata.get("qzone_post_status") == "deleted":
                         continue
                     summary, facts = self._deleted_description(
                         str(metadata.get("persona_summary") or row["text"]),
@@ -594,9 +614,7 @@ class Integrations:
             )
             deleted = kind == "delete" or deletion is not None
             if deletion is not None and kind != "delete":
-                summary, facts = self._deleted_description(
-                    summary, facts, deletion.get("qzone_occurred_at")
-                )
+                summary, facts = self._deleted_description(summary, facts, deletion.get("qzone_occurred_at"))
             processor = peer.initializer.memory_processor
             content, metadata, importance = processor.build_memory_from_structured_data(
                 structured_data={

@@ -12,9 +12,7 @@ from .provider import PhotoError, validate_image
 MAX_BYTES = 50 * 1024 * 1024
 
 
-def unique_references(
-    images: list[bytes], roles: list[str]
-) -> tuple[list[bytes], list[str]]:
+def unique_references(images: list[bytes], roles: list[str]) -> tuple[list[bytes], list[str]]:
     """Keep the first occurrence and its role when sources share image bytes."""
     seen = set()
     unique_images, unique_roles = [], []
@@ -46,11 +44,7 @@ async def _read_image(location):
             url = location
             for _ in range(6):
                 parsed = urlsplit(url)
-                if (
-                    parsed.scheme not in {"http", "https"}
-                    or parsed.username
-                    or parsed.password
-                ):
+                if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password:
                     raise PhotoError("图片地址无效")
                 async with client.stream("GET", url) as response:
                     if response.is_redirect:
@@ -84,20 +78,6 @@ async def _read_image(location):
     return validate_image(data)[0]
 
 
-async def native_references(data_dir, values):
-    root = (data_dir / "files").resolve()
-    images = []
-    for value in values:
-        path = (data_dir / value.replace("\\", "/")).resolve()
-        if not path.is_relative_to(root):
-            raise PhotoError("参考人像路径无效，请重新上传")
-        try:
-            images.append(await read_image(str(path)))
-        except OSError:
-            raise PhotoError("参考人像文件找不到，请重新上传并保存") from None
-    return images
-
-
 def image_locations(chain):
     """Quoted pictures precede current pictures, matching the existing plugin."""
     quoted, current = [], []
@@ -120,14 +100,8 @@ async def event_references(
 ):
     from .message_images import collect_images
 
-    images = await collect_images(
-        event, prefer_current=prefer_current, current_only=current_only
-    )
-    locations = list(
-        dict.fromkeys(
-            image.url or image.file for image in images if image.url or image.file
-        )
-    )
+    images = await collect_images(event, prefer_current=prefer_current, current_only=current_only)
+    locations = list(dict.fromkeys(image.url or image.file for image in images if image.url or image.file))
     if only_single and len(locations) != 1:
         return []
     if len(locations) > 8:

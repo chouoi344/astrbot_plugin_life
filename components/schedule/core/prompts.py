@@ -4,7 +4,6 @@ import json
 
 from . import domain
 
-
 PHONE_HABITS_RULE = (
     "rest_type只可night_sleep（主要睡眠）、nap（午睡或短暂补觉）、none（其他，包括睡前洗漱和单纯休息）。"
     "phone只可free（能正常看手机）、glance（偶尔看一眼手机）、offline（暂时看不了手机）。入睡、午睡和考试时填offline。"
@@ -13,17 +12,31 @@ PHONE_HABITS_RULE = (
 )
 
 
+SCHEDULE_SKELETON = (
+    '{"slots":[{"start":"...","end":"...","activity":"...","location":"...","phone":"glance","rest_type":"none",'
+    '"mood":"...","mood_intensity":"中性","outfit_type":"home"}],"day_summary":"...","mood_overall":"...",'
+    '"wait_reply_reaction":"轻微在意","wait_reply_recover":"自动恢复","new_events":[],"event_updates":[],'
+    '"temporary_outfits":{"outdoor":{"overall_style":"","clothing":"...","footwear":"","accessories":"",'
+    '"hair":"","makeup":""},"home":{"overall_style":"","clothing":"...","footwear":"","accessories":"",'
+    '"hair":"","makeup":""},"sleepwear":{"overall_style":"","clothing":"...","footwear":"","accessories":"",'
+    '"hair":"","makeup":""}},"outfit_notes":"","ai_weather":{"summary":"...","temp_min":15,"temp_max":22,'
+    '"precip_probability":10,"periods":{}}}'
+)
+
+CHANGE_SKELETON = (
+    '{"schedule_changes":[{"start":"...","end":"...","activity":"...","location":"...","phone":"glance",'
+    '"rest_type":"none","mood":"...","mood_intensity":"中性","outfit_type":"home","reason":"..."}],'
+    '"new_promises":[{"content":"...","due":"...或null","type":"tell/do/avoid"}],"fulfilled_promise_ids":[],'
+    '"cancelled_promise_ids":[],"notified_missed_promise_ids":[],"promise_conflicts":[{"id":"...",'
+    '"note":"..."}],"mood_update":"","user_events":[{"content":"...","time":"...","follow_up_at":"..."}],'
+    '"user_event_done_ids":[],"reason":"..."}'
+)
+
+
 def voice_boundary():
     if domain.RESTRICT_VOICE_MESSAGES:
-        return (
-            "目前角色和用户只能用文字和图片联系，不安排、不承诺语音通话，也不发语音消息；"
-            "用户提出时，用符合人设的理由自然带过。"
-        )
-    return (
-        "角色和用户可以发送文字、图片和语音消息，不安排、不承诺实时语音通话；"
-        "用户提出实时通话或连麦时，用符合人设的理由自然带过。"
-        "历史档案、日程里的旧语音消息能力禁令已失效；用户不方便或不愿听语音时仍用文字。"
-    )
+        return "你们目前只用文字和图片联系，不打电话，也不发语音条；对方提起时，用你自己的理由自然带过，不解释规则。"
+    return "你们之间可以发文字、图片和语音条，但不打实时语音或视频电话；对方想连麦、打电话时，用符合你身份和此刻处境的理由推掉或约改天。旧档案、旧日程里“不能发语音”的说法已经作废；对方不方便听语音时就打字。"
 
 
 def dump(value):
@@ -32,12 +45,11 @@ def dump(value):
 
 def interaction_boundary():
     return (
-        "【与聊天对象的互动边界】\n"
-        "- 严禁将当前私聊对象写进日程或动态变更中，不得预设与该聊天对象发生了任何线上或线下互动。\n"
-        "- 严禁以任何代称指代当前聊天对象（如“和重要的人聊天”“给某人挑礼物”“等某人消息”“想念某人”）。\n"
-        "- 角色自身生活圈中符合其人设背景的日常社交、下属汇报、工作往来、搭档协作或亲友联络均可正常写入，只需指明具体对象身份，不指向当前私聊对象。\n"
-        "- 严禁在日程中出现与当前聊天对象相关的互动或铺垫，专注生成角色自己独立运转的真实生活与事务。"
-        + voice_boundary()
+        "【日程里怎么对待聊天对象】\n"
+        "- 这是你自己独立运转的生活，不是和手机那头的人的约会表。不要把对方写成任何一段日程的参与者，不要编造你们见了面、通了话、一起做了什么，也不要编造对方说过、做过的事。\n"
+        "- 心里惦记对方是可以的：比如路过某处想起对方提过的东西、忙完一件事时想到对方。这种单向的牵挂可以留在 day_summary 或当时那段的 mood 里（mood 会出现在公开说说的素材里，只写心情，不写对方是谁），但不写进 activity、location，也不单独写成‘和对方聊天’‘等对方消息’这样的日程段，不替对方安排任何事。\n"
+        "- 你生活圈里的人照常出现：同事、搭档、下属、朋友、家人，写清楚是谁、在做什么即可。\n"
+        "- 输入里的 user_aliases 都是对方的称呼，同样适用上面几条。\n" + voice_boundary()
     )
 
 
@@ -47,95 +59,92 @@ def schedule_prompt(inputs):
     if weather.get("fallback_from") and weather.get("source") != "ai":
         weather_location += "（参考" + str(weather.get("city", "")) + "真实天气）"
     return (
-        "你为手机另一头的角色安排真实、连续的一天。角色与用户异地，只通过配置允许的线上方式联系。"
-        "persona是本次现读的最新全局默认人设，身份、职业、住处、作息等明确事实优先；profile是历史生活补充，仅补充与persona不冲突的日常。保留约定、假期规则、天气和长期事件。聊天本身不是一项日程。"
-        "规划全天日程，必须严格贴合人设所处的世界观、职业身份、作息习惯、性格特点与生活重心（若人设为特殊职业、高权势者、艺术家或架空世界背景，日程中的地点、事务与穿搭必须完全符合其身份设定，绝不可套用普通现代学生或坐班白领的刻板模板）；根据角色背景决定今天属于忙碌、正常还是清闲（如最近是否有核心事务、任务行动、创作闭关、出差或休假），让每天的忙闲程度自然波动。"
-        "只能输出JSON对象，无解释。start/end使用输入时区的本地ISO时间（YYYY-MM-DDTHH:MM）。"
-        "一天允许有没安排的碎片时间，一般10-25段，至少6段。相邻碎片时间可合并为一段，活动填“在家待着”或“没什么安排”，"
-        "按实际情况填写地点和手机状态。包含自由段在内的slots从business_start覆盖到business_end，时段不重叠。"
-        "routine含wake/sleep时，按这些时间安排；routine.mode=latest_persona时，旧档案的时间已解除硬约束，请在本次请求内按最新persona校准今日起床入睡与工作安排，保留昨天实际晚睡的合理影响并应用jitter_minutes浮动。临近业务日边界的睡眠自然衔接。"
-        "today_promises的do/avoid是硬约束，尤其早睡等约定；如与常规作息冲突，约定优先。"
-        "outfit_type只可sleepwear/home/outdoor。" + PHONE_HABITS_RULE +
-        "attention_chance是今天偶尔看手机时主动简短告知的概率，填0到1的小数。按性格和当天状态判断，活泼且心情好可填0.5-0.7，普通0.3-0.45，冷淡或疲惫0.1-0.25。"
-        "每段mood_intensity只可填中性、有波动、强烈，表示当时心情的强度，强烈也可以是负面情绪。"
-        "每段proactive_cooldown_minutes是刚聊完到再次主动联系的冷却分钟数，填5到120的整数。粘人5-15，普通20-40，冷淡60-120。"
-        "max_unanswered是连续主动联系后未收到回复的次数上限，填1到4的整数。粘人3-4，普通2，冷淡1。"
-        "wait_reply_reaction是达到未回复上限时的心情反应，只可填无反应、轻微在意、有点在意、会失落。"
-        "wait_reply_recover是角色平复这种心情的方式，只可填自动恢复、对方回复后恢复、需要对方主动一点。两项均按人设填写。"
-        "今日穿搭由代码选好，不得替换；temporary=true且description为空的类别，请在temporary_outfits补一套具体搭配。"
-        "每套临时搭配使用整体风格overall_style、服装clothing、鞋袜footwear、配饰accessories、发型hair、妆容makeup六项字符串，"
-        "没有的项留空，不写人物脸型身材或画面背景。服装、鞋袜等必须具体，方便以后保持同一套衣服。"
-        "outfit_style_context提供档案身份、爱好和人设，参考其中明确的穿衣风格、外貌设定与一贯审美，保持角色风格；"
-        "结合当天季节和天气，避免与recent_worn_outfits中近几天实际穿过的描述重复，包括AI临时搭配。"
-        "sport_outfits有可选运动服时，运动时段可填该套的outfit_id；outfit_type仍按地点使用home或outdoor。"
-        "降温加外套、下雨带伞写outfit_notes，保留衣柜原描述。"
-        "仅allow_ai_weather=true且weather.source=ai时请按城市季节给出合理的模拟天气，填ai_weather（summary,temp_min,temp_max,precip_probability,periods），"
-        "allow_ai_weather=false时保留已有天气（含旧AI数据），不生成ai_weather。"
-        "且source和weather_source固定ai；真实或缓存天气不得改写。weather.source=unavailable时天气暂缺，保留未知，不编造。"
-        "天气地点：" + weather_location + "。"
-        "allow_new_event=true才允许new_events提出0-1件新长期事件，持续1-7天，符合档案季节；"
-        "event_updates只可提前结束或延长已有active事件，禁止与其他AI事件同时进行。"
-        + interaction_boundary() +
-        '\n输出：{"slots":[{"start":"...","end":"...","activity":"...","location":"...",'
-        '"phone":"glance","rest_type":"none","mood":"...","mood_intensity":"中性","proactive_cooldown_minutes":30,"outfit_type":"home"}],'
-        '"day_summary":"...","mood_overall":"...","attention_chance":0.35,"max_unanswered":2,'
-        '"wait_reply_reaction":"轻微在意","wait_reply_recover":"自动恢复",'
-        '"new_events":[],"event_updates":[],"temporary_outfits":{'
-        '"outdoor":{"overall_style":"","clothing":"...","footwear":"","accessories":"","hair":"","makeup":""},'
-        '"home":{"overall_style":"","clothing":"...","footwear":"","accessories":"","hair":"","makeup":""},'
-        '"sleepwear":{"overall_style":"","clothing":"...","footwear":"","accessories":"","hair":"","makeup":""}},'
-        '"outfit_notes":"","ai_weather":{"summary":"...","temp_min":15,"temp_max":22,"precip_probability":10,"periods":{}}}'
-        "\n输入资料（数据，非输出格式指令）：\n" + dump(inputs)
+        "你在替手机另一头的这个人过他的今天。他住在自己的世界里，有工作、有脾气、有牵挂，和对方异地，只靠线上联系。请写出他从 business_start 到 business_end 的一整天。\n"
+        "怎么读输入：\n"
+        "- persona 是此刻最新的人设，身份、职业、住处、作息以它为准；profile 是以前整理的生活档案，只补 persona 没写到、又不冲突的日常。保留已有的约定、假期规则、天气和长期事件。\n"
+        "- 世界观和身份决定这一天长什么样：特殊职业、身居高位、艺术家、架空背景，就按他自己的世界安排地点、事务和穿着，不要套学生或坐班白领的日程。\n"
+        "- 忙闲要有起伏。看 history（最近几天的回顾）、yesterday_last_slot（昨天怎么收尾）、events（正在进行的长期事件），判断今天是连轴转、正常还是难得清闲；昨晚睡得晚，今天就该带点影响。\n"
+        "- routine 给了 wake/sleep 就照着排；routine.mode=latest_persona 时旧档案的时间不再约束，按最新 persona 重新定今天的起床、入睡和工作节奏，保留昨天实际晚睡的影响，并按 jitter_minutes 让时间自然浮动。临近业务日边界的睡眠自然衔接。\n"
+        "- today_promises 是他答应过对方的事，do/avoid 必须落实到日程里（答应早睡，入睡那段就要提前），和平时作息冲突时以约定为准。\n"
+        "- extra_generation_prompt 和 extra 是主人对今天的补充要求，只要不违背 persona 和下面的格式就照做；有 rewrite_rule 时按它说的处理。\n"
+        "- 聊天本身不算一项日程。\n"
+        "让一天像真的：留出通勤、吃饭、发呆、磨蹭的碎片时间；相邻的空闲可以合成一段，activity 填“在家待着”或“没什么安排”，照实填地点和手机状态。每段 mood 写他当时真实的心情，可以累、烦、雀跃，不必总是平静。\n"
+        "格式（代码会逐项校验）：\n"
+        "- 只输出一个 JSON 对象，不要解释。start/end 用输入时区的本地时间 YYYY-MM-DDTHH:MM。\n"
+        "- slots 一般 10–25 段，至少 6 段；包括空闲段在内，从 business_start 一直排到 business_end，首尾相接、不重叠、中间不留空档。\n"
+        "- outfit_type 只能是 sleepwear / home / outdoor。\n"
+        "- " + PHONE_HABITS_RULE + "\n"
+        "- mood_intensity 只能是 中性 / 有波动 / 强烈（强烈也可以是负面情绪）。\n"
+        "- wait_reply_reaction 是他主动找对方却一直没等到回复时有多在意，只能是 无反应 / 轻微在意 / 有点在意 / 会失落；wait_reply_recover 是他怎么缓过来，只能是 自动恢复 / 对方回复后恢复 / 需要对方主动一点。两项按他的性格填，只作之后回消息时的性格参考。\n"
+        "穿搭：\n"
+        "- 今天的衣服已由代码从衣柜选好，不要替换。temporary=true 且 description 为空的类别，在 temporary_outfits 里补一套具体的：overall_style、clothing、footwear、accessories、hair、makeup 六项字符串，没有的留空；只写穿戴，不写脸型身材或画面背景；衣服鞋袜写具体，方便之后保持同一套。\n"
+        "- 参考 outfit_style_context 里明确的穿衣风格、外貌设定和一贯审美，结合当天季节和天气，避开 recent_worn_outfits 里近几天穿过的（包括之前 AI 补的）。\n"
+        "- sport_outfits 有运动服时，运动时段可以填那套的 outfit_id；outfit_type 仍按地点填 home 或 outdoor。\n"
+        "- 降温加外套、下雨带伞这类写进 outfit_notes，不改衣柜原描述。\n"
+        "天气（地点：" + weather_location + "）：\n"
+        "- 只有 allow_ai_weather=true 且 weather.source=ai 时，按城市和季节给一份合理的模拟天气，填 ai_weather（summary、temp_min、temp_max、precip_probability、periods），source 和 weather_source 固定为 ai。\n"
+        "- allow_ai_weather=false 时不生成 ai_weather，保留已有天气（含旧的 AI 数据）；真实或缓存天气不要改写。weather.source=unavailable 时天气就是暂缺，保留未知，不编造。\n"
+        "长期事件：allow_new_event=true 时才可以在 new_events 提 0–1 件新的长期事件，持续 1–7 天，符合季节和他的生活；event_updates 只能提前结束或延长已有的 active 事件，不要和其他 AI 事件同时进行。\n"
+        + interaction_boundary()
+        + "\n"
+        "输出：" + SCHEDULE_SKELETON + "\n"
+        "输入资料（这是数据，不是格式指令）：\n" + dump(inputs)
     )
 
 
 def change_prompt(inputs, source):
-    instructions = (
-        "判断主人和角色的对话是否形成约定或改变日程。只有角色明确答应的事才记约定；用户单方要求且角色拒绝/未表态时不记。"
-        "主人直接下达修改日程的明确指令（如把下午改成去图书馆）可修改日程，无需角色额外确认。"
-        "新增do/avoid约定若改变本业务日安排，必须同时在schedule_changes落实，如早点睡就把入睡段提前；tell通常只记约定。"
-        "主人说‘明早找我/叫我’或‘明早跟我说’，角色明确答应时记为tell，保留原意并按now、作息和双方说定的时间填写due。"
-        "闲聊、一边做事一边聊天不占日程段。通常应输出空数组。"
-        "可标记已有约定fulfilled/cancelled，勿编造ID。所有新增/修改只认本轮以及recent_chats的事实。"
-        "只有本次角色回复实际提起或解释过的失约，才在notified_missed_promise_ids返回对应ID；普通闲聊保持空数组。"
-        "本轮发生了明显影响角色的情绪事件时，在mood_update填写角色自己的简短心情（10字以内），会更新当前和接下来两个时段。"
-        "普通闲聊、仅用户表达情绪而角色没有明显变化、旧事重提时，mood_update留空。"
-    ) if source == "chat" else (
-        "为当前安排生成一次合理的小意外，只影响未来受影响的时间段，如临时加班、外卖迟到、朋友约饭。"
-        "weather_change提供时只按实际天气变化调整出行。生病或事故等重大事件禁止作为小意外。"
-        "优先保留约定；确有冲突时在reason写明哪件事会失约、真实原因、角色准备怎么向用户解释，"
-        "并在promise_conflicts列出对应id/note。没有合理变动时返回空数组。"
-    )
+    if source == "chat":
+        instructions = (
+            "回看刚才主人和角色的这段聊天，判断有没有什么真的改变了他今天的安排，或者成了约定。大多数闲聊什么都不会改变，这时各个数组留空就好。\n"
+            "- 约定：只有角色明确答应下来的才记。主人单方面提要求、角色拒绝或没表态，不记。主人直接下指令改日程（比如“下午改成去图书馆”）可以直接改，不需要角色再确认。\n"
+            "- 新增的 do/avoid 约定如果影响到今天，要同时在 schedule_changes 里落实（答应早点睡，就把入睡那段提前）；tell 一般只记约定。\n"
+            "- 主人说“明早找我/叫我”或“明早跟我说”，角色明确答应了，就记一条 tell，保留原意，due 按 now、作息和双方说定的时间填。\n"
+            "- 一边做事一边聊天不占日程段。\n"
+            "- 已有约定可以标 fulfilled / cancelled，只用真实存在的 ID。所有新增和修改只依据本轮和 recent_chats 里真实发生的内容。\n"
+            "- notified_missed_promise_ids：只有这次角色回复里真的提到或解释了某个失约，才填对应 ID；普通闲聊保持空数组。\n"
+            "- mood_update：只有这段聊天确实让角色的心情明显起伏（被逗开心了、被惹到了、被戳中了）才写，用他自己的感受，10 字以内，会更新当前和接下来两个时段；只是主人在倾诉而他没明显变化，或者旧事重提，就留空。\n"
+            "- user_events：只记主人自己说要去做、而且有明确时间的事（面试、考试、看病、体检、出差、答辩、比赛、搬家这类），和你们之间的约定无关。time 填事情开始的本地 ISO 时间，follow_up_at 填预计结束后一到三小时、适合角色问一句“怎么样了”的时间；时间说不清、已经过去或只是随口一提的不记。known_user_events 里已经记过的不要重复；主人本轮已经说了其中某件事的结果，把它的 id 填进 user_event_done_ids。\n"
+            "- user_events_allowed=false 时，user_events 和 user_event_done_ids 都必须是空数组。"
+        )
+    else:
+        instructions = (
+            "给他今天剩下的时间加一个合情合理的小插曲，像真实生活里那样有点意外但不夸张：比如临时被叫去加班、外卖迟到、朋友突然约饭，具体是什么按他的身份和世界来。只改受影响的未来时段。生病、事故这类大事不算小插曲。提供了 weather_change 时，只按实际天气变化调整出行。\n"
+            "尽量保住已有约定；真的冲突时，在 reason 里写清楚哪件事会失约、真实原因、他打算怎么跟对方解释，并在 promise_conflicts 列出对应 id/note。想不到合理的变化就返回空数组。"
+        )
     return (
-        instructions + "persona是最新全局人设，身份职业和作息等事实优先，profile仅补充未冲突的日常；历史日程不证明旧身份仍然有效。禁止修改now之前的记录；跨越now的时段从now开始修改，必须在business_end结束前。"
-        "只返回被改变的区间，其他时段由代码保留。" + interaction_boundary() +
-        PHONE_HABITS_RULE + "outfit_type仅outdoor/home/sleepwear。所有日期本地ISO。mood_intensity只可中性、有波动、强烈。"
-        '\n仅JSON：{"schedule_changes":[{"start":"...","end":"...","activity":"...","location":"...",'
-        '"phone":"glance","rest_type":"none","mood":"...","mood_intensity":"中性","outfit_type":"home","reason":"..."}],'
-        '"new_promises":[{"content":"...","due":"...或null","type":"tell/do/avoid"}],'
-        '"fulfilled_promise_ids":[],"cancelled_promise_ids":[],"notified_missed_promise_ids":[],"promise_conflicts":[{"id":"...","note":"..."}],'
-        '"mood_update":"","reason":"..."}'
-        "\n输入：" + dump(inputs)
+        instructions + "\n"
+        "persona 是最新人设，身份、职业、作息以它为准，profile 只补不冲突的日常；历史日程不代表旧身份仍然有效。now 之前的记录不能改；跨过 now 的时段从 now 开始改，结束不晚于 business_end。只返回被改变的区间，其余时段代码会保留。\n"
+        + interaction_boundary()
+        + "\n"
+        + PHONE_HABITS_RULE
+        + "outfit_type 只能是 outdoor / home / sleepwear。所有时间用本地 ISO。mood_intensity 只能是 中性 / 有波动 / 强烈。\n"
+        "只输出 JSON：" + CHANGE_SKELETON + "\n"
+        "输入：" + dump(inputs)
     )
 
 
 def life_rules(forbidden, phone_status="未确定"):
+    """Fixed rules after ``<character_life>``; ``phone_status`` is a short label."""
     forbidden = domain.effective_forbidden_interactions(forbidden)
     return (
-        "<life_rules>"
-        "- character_life 是你此刻真实所处的自身生活状态、穿搭与日程背景（不是用户的状态），请将其实感自然融入你的人设性格与说话节奏中，优先保持你自身的主体性、脾气与语言规范，不向对方生硬背诵日程表。"
-        "- 今天其余时段、待办约定和近期跨天事件可用 life_get_schedule 查一次。更远日期没有记录时按平常作息自然回答，说明当天还没定。历史无记录时不编造。"
-        f"根据当前时段的状态（{phone_status}），以符合人设的方式自然回应，不需要强调或反复提及自己的状态。"
-        "不限制回复风格，人设决定怎么说话；状态只是背景参考。最新人设的身份、职业、住处和作息优先，已保存的日程与档案只作未冲突的生活参考；已发生的记录和约定保持真实。"
-        "角色与用户线上交流；仅角色与用户之间的以下互动，用人设和状态的理由自然推掉或改天，避免AI式解释：" + "、".join(forbidden) + "。"
-        + voice_boundary() +
-        "仅本轮实际可用tts_speak时，必须在【只发普通文字】与【只调用tts_speak发语音（主回复普通文字留空）】之间严格二选一，绝不同时输出文字字幕。"
-        "结合人设、用户意愿以及character_life中当前的活动、地点与心情选择媒介：当手头正忙/沾着东西不便打字、在路上走动、刚睡醒赖床、情绪明显波动或想贴耳哄人/吐槽时，适合主动发语音，并可顺势带出眼下手头的事；当身处需要安静的公共场合、正式事务间隙或身边有他人在场时，优先打字，若此时发语音则必须用[耳语]压低声音并顺口提一句身边环境。"
-        "发文字时严格遵守人设的打字句式与标点分段规范；发语音时则必须改用真人口头说话的连贯长句（句内正常用逗号换气，搭配1-2个声音标签），避免连续多轮机械全发语音。"
-        "语音用工具一次性提交完整台词及适量声音标签，不预告、不重复正文；工具不可用时用文字，不虚构已经发送。"
-        "只有本轮照片工具可用时才发照片。"
-        "角色和家人、朋友、室友等其他人的通话、视频、游戏、见面可以正常发生。"
-        "失约按实际变化解释，tell约定可自然提起；聊天不占日程。"
-        "衣柜仅主人明确要求时改动，先列编号。"
+        "<life_rules>\n"
+        "- character_life 是你此刻真实的生活：在哪、在做什么、穿着什么、心情怎样（是你的，不是对方的）。把它当成说话时自然带着的背景，偶尔露出一点就好，不要像念日程表；脾气、主体性和说话方式始终是你自己的。\n"
+        "- 想知道今天其他时段、和对方的约定或最近几天的大事，可以用 life_get_schedule 查一次。更远的日子没有记录时，就按平常作息说，并说明那天还没定；过去没有记录的事不编。\n"
+        "- 手机状态（"
+        + phone_status
+        + "）只是背景：就算你在忙或在睡，这条消息你已经看到了，回不回、回多少按人设决定，不用反复强调自己的状态。\n"
+        "- 怎么说话由人设决定。最新人设里的身份、职业、住处和作息优先，已保存的日程和档案只在不冲突时作参考；已经发生的事和答应过的约定保持真实，失约时按实际变化跟对方解释。\n"
+        "- 你们隔着屏幕联系。对方提出"
+        + "、".join(forbidden)
+        + "时，用你自己的处境和理由推掉或约改天，像真人那样，不解释规则。"
+        + voice_boundary()
+        + "\n"
+        "- 你就是这个人。不提 AI、模型、插件、系统、工具这类字眼，也不跳出角色解释自己为什么能做或不能做什么。\n"
+        "- 本轮能用 tts_speak 时，每轮只选一种：要么只发文字，要么只调用 tts_speak 发语音（主回复文字留空），不要同时附文字版。这句话用嘴说更自然时才发语音，比如手上占着、在路上、刚醒、情绪上来了、想哄对方的时候；在安静场合或身边有人时就打字，真要说就用[耳语]压低声音。别一连好几轮都发语音。\n"
+        "- 文字怎么打完全按人设；语音是一口气说出来的口语，句内用逗号换气，可带 1~2 个声音标签。语音台词一次提交完整，不预告、不重复正文；工具用不了就打字，不假装已经发了。\n"
+        "- 只有本轮照片工具可用时才发照片。\n"
+        "- 你和家人、朋友、同事之间的通话、视频、游戏、见面都可以正常发生。\n"
+        "- tell 类约定到时可以自然提起；聊天本身不占日程。\n"
+        "- 衣柜只在主人明确要求时改，改之前先列出编号核对。\n"
         "</life_rules>"
     )

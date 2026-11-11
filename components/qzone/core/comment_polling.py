@@ -13,7 +13,6 @@ from .request_policy import QzoneDeferred
 from .settings import admin_ids
 from .transport import AccountIdentityError, QzonePostDeletedError, QzoneReadCancelled
 
-
 READ_BUDGET_SECONDS = 60
 REPLIES_PER_ROUND = 20
 
@@ -55,9 +54,7 @@ def _claim_round(store, account, slot, now):
     rounds = store.get_value(key, {})
     slot_key = str(start)
     previous = rounds.get(slot_key)
-    if previous and (
-        round_number <= previous[0] or timestamp < previous[1] + min(300, (end - start) * 0.2)
-    ):
+    if previous and (round_number <= previous[0] or timestamp < previous[1] + min(300, (end - start) * 0.2)):
         return False
     rounds = {key: value for key, value in rounds.items() if float(key) >= timestamp - 172800}
     rounds[slot_key] = [round_number, timestamp]
@@ -85,27 +82,29 @@ def _observe(service, post, detail, binding, day_start, day_end, now):
             seen.add(key)
             continue
         created_at = _timestamp(comment.get("created_at"))
-        if (created_at and (created_at < activated or not day_start <= created_at < day_end)
-                or (first_detail and post["source"] == "external" and not created_at)):
+        if (created_at and (created_at < activated or not day_start <= created_at < day_end)) or (
+            first_detail and post["source"] == "external" and not created_at
+        ):
             seen.add(key)
             continue
         if key not in seen:
-            store.record_comment({
-                "key": key,
-                "tid": post["tid"],
-                "comment_id": cid,
-                "parent_id": comment.get("parent_id"),
-                "author_qq": uid,
-                "author_name": str(comment.get("nickname", uid)),
-                "content": str(comment.get("content", "")),
-                "created_at": created_at or now,
-                "binding": post["binding"],
-                "raw": comment,
-            })
+            store.record_comment(
+                {
+                    "key": key,
+                    "tid": post["tid"],
+                    "comment_id": cid,
+                    "parent_id": comment.get("parent_id"),
+                    "author_qq": uid,
+                    "author_name": str(comment.get("nickname", uid)),
+                    "content": str(comment.get("content", "")),
+                    "created_at": created_at or now,
+                    "binding": post["binding"],
+                    "raw": comment,
+                }
+            )
             seen.add(key)
         existing = store.get_comment(key)
-        if (existing and existing["status"] in ("pending", "failed")
-                and day_start <= existing["created_at"] < day_end):
+        if existing and existing["status"] in ("pending", "failed") and day_start <= existing["created_at"] < day_end:
             observed.append(existing)
     store.set_value(baseline_key, sorted(seen))
     store.set_value(_post_key(post), {**state, "detail_initialized": True, "last_detail_at": now})
@@ -140,18 +139,28 @@ async def poll_comments(service, event, binding):
             service.authorize(event)
         except (PermissionError, RequestProblem):
             raise QzoneReadCancelled() from None
-        if (check_at.date() != day
-                or await service.integrations.comment_slot(binding, check_at) != slot
-                or service.now().date() != day or service.now().timestamp() >= slot[1].timestamp()
-                or not service.settings.auto_reply or store.get_value("paused", False)):
+        if (
+            check_at.date() != day
+            or await service.integrations.comment_slot(binding, check_at) != slot
+            or service.now().date() != day
+            or service.now().timestamp() >= slot[1].timestamp()
+            or not service.settings.auto_reply
+            or store.get_value("paused", False)
+        ):
             raise QzoneReadCancelled()
 
     deadline = time.monotonic() + READ_BUDGET_SECONDS
     try:
         await check_window()
-        await _read_before_deadline(service.refresh_posts(
-            event, binding, eligible=eligible, before_read=check_window,
-        ), deadline)
+        await _read_before_deadline(
+            service.refresh_posts(
+                event,
+                binding,
+                eligible=eligible,
+                before_read=check_window,
+            ),
+            deadline,
+        )
         await check_window()
     except QzoneReadCancelled:
         return
@@ -164,8 +173,10 @@ async def poll_comments(service, event, binding):
     owners = {binding["umo"]: binding}
     posts = store.list_posts(
         limit=service.settings.watch_posts,
-        bot_id=binding["bot_id"], persona_id=binding["persona_id"],
-        published_from=day_start, published_before=post_before,
+        bot_id=binding["bot_id"],
+        persona_id=binding["persona_id"],
+        published_from=day_start,
+        published_before=post_before,
     )
     posts.sort(key=lambda post: store.get_value(_post_key(post), {}).get("last_detail_at", 0))
     candidates = {}
@@ -181,7 +192,8 @@ async def poll_comments(service, event, binding):
             await check_window()
             transport = await service.transport(event)
             detail = await _read_before_deadline(
-                transport.get_post(post["tid"], before_read=check_window), deadline,
+                transport.get_post(post["tid"], before_read=check_window),
+                deadline,
             )
             await check_window()
         except QzoneReadCancelled:

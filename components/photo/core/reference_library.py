@@ -47,12 +47,7 @@ class ReferenceLibrary:
                 stored = json.loads(self.path.read_text(encoding="utf-8-sig"))
                 self._groups = self._parse_groups(stored)
             else:
-                groups = self._parse_groups(
-                    {
-                        group: legacy_config.get(key, [])
-                        for group, key in _LEGACY_KEYS.items()
-                    }
-                )
+                groups = self._parse_groups({group: legacy_config.get(key, []) for group, key in _LEGACY_KEYS.items()})
                 self._write_index(groups)
                 self._groups = groups
         except (OSError, ValueError):
@@ -77,9 +72,7 @@ class ReferenceLibrary:
 
     def _write_index(self, groups):
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        descriptor, filename = tempfile.mkstemp(
-            dir=self.data_dir, prefix=".reference-library-", suffix=".tmp"
-        )
+        descriptor, filename = tempfile.mkstemp(dir=self.data_dir, prefix=".reference-library-", suffix=".tmp")
         temp = Path(filename)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
@@ -137,9 +130,7 @@ class ReferenceLibrary:
             self._groups = groups
             return dict(groups)
 
-    def save_image(
-        self, group: str, index: int | None, data: bytes, revision: str | None = None
-    ):
+    def save_image(self, group: str, index: int | None, data: bytes, revision: str | None = None):
         if len(data) > MAX_REFERENCE_UPLOAD_BYTES:
             raise PhotoError("参考图不能超过 20 MB")
         data, mime = validate_image(data)

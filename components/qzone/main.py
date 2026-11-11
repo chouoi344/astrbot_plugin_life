@@ -9,6 +9,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context, StarTools
 
 from ...runtime import QZONE_ID
+from ..common.contracts import PHOTO_COMPLETION, PROACTIVE_DELIVERY
 from .core.dialogue import CHAT_RULE, Outcome, RequestProblem, exception_outcome
 from .core.integrations import space_session_enabled
 from .core.service import QzoneService
@@ -54,9 +55,8 @@ class QzoneLifePlugin:
             and event.get_platform_name() == "aiocqhttp"
             and getattr(event, "bot", None)
             and str(event.get_sender_id()) in admin_ids(self.context)
-            and not event.get_extra("life_photo_completion")
-            and event.get_extra("life_busy_replay_v1") is None
-            and not event.get_extra("life_delivery_v1")
+            and not event.get_extra(PHOTO_COMPLETION)
+            and not event.get_extra(PROACTIVE_DELIVERY)
             and await space_session_enabled(self.context, event.unified_msg_origin, event)
             and self._enabled()
         )
@@ -96,9 +96,7 @@ class QzoneLifePlugin:
         Args:
             caption(string): 用户明确指定的文案；未指定留空。
         """
-        return await self._run(
-            event, lambda: self.service.publish_from_chat(event, caption), action="publish"
-        )
+        return await self._run(event, lambda: self.service.publish_from_chat(event, caption), action="publish")
 
     async def delete_post_tool(self, event: AstrMessageEvent, target: str) -> str:
         """用户明确要删除你自己空间的说说时使用。用文案片段、刚才那条、最新一条或刚查询候选中的第一条等定位。候选不唯一时询问用户，不猜。内部标识仅用于调用，不展示。
@@ -106,9 +104,7 @@ class QzoneLifePlugin:
         Args:
             target(string): 用户指定的内容片段、先后顺序或内部引用。
         """
-        return await self._run(
-            event, lambda: self.service.delete_post(event, target), action="delete"
-        )
+        return await self._run(event, lambda: self.service.delete_post(event, target), action="delete")
 
     async def list_posts_tool(self, event: AstrMessageEvent) -> str:
         """用户询问自己空间最近内容，或需要定位要删的说说时查看。用时间和内容描述候选，勿展示内部标识。"""
@@ -128,9 +124,7 @@ class QzoneLifePlugin:
 
     async def retry_tool(self, event: AstrMessageEvent) -> str:
         """用户要求重试刚才未成功的照片发布时使用。复用当前聊天里确定失败的最近一次原图原文，结果不明会先阻止重复发送。"""
-        return await self._run(
-            event, lambda: self.service.retry_last_publish(event), action="publish"
-        )
+        return await self._run(event, lambda: self.service.retry_last_publish(event), action="publish")
 
     async def check_tool(
         self, event: AstrMessageEvent, target: str = "", outcome: str = "", confirmation: str = ""

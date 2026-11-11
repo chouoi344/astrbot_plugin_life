@@ -18,10 +18,15 @@ class BreezeVoiceCatalog:
     _INVALID_RESPONSE = "BreezeBlue 返回的声音目录有问题，请稍后再试"
 
     def __init__(
-        self, *, base_url: str = DEFAULT_BASE_URL, session: aiohttp.ClientSession | None = None
+        self,
+        *,
+        base_url: str = DEFAULT_BASE_URL,
+        session: aiohttp.ClientSession | None = None,
+        proxy: str | None = None,
     ):
         self._base_url = base_url
         self._session = session
+        self._proxy = proxy
         self._closed = False
 
     async def close(self) -> None:
@@ -48,9 +53,7 @@ class BreezeVoiceCatalog:
             raise VoiceError("声音目录页码有问题，请重新打开")
         if type(page_size) is not int or not 1 <= page_size <= 100:
             raise VoiceError("声音目录每页数量应为 1 到 100")
-        if next_page_token is not None and (
-            not isinstance(next_page_token, str) or not next_page_token.strip()
-        ):
+        if next_page_token is not None and (not isinstance(next_page_token, str) or not next_page_token.strip()):
             raise VoiceError("声音目录翻页信息有问题，请重新搜索")
         params = {"voice_type": voice_type, "page": page, "page_size": page_size}
         if search.strip():
@@ -101,8 +104,7 @@ class BreezeVoiceCatalog:
     def _voice(cls, payload: object) -> dict:
         required = ("voice_id", "name", "language_code", "origin", "voice_type")
         if not isinstance(payload, dict) or any(
-            not isinstance(payload.get(field), str) or not payload[field].strip()
-            for field in required
+            not isinstance(payload.get(field), str) or not payload[field].strip() for field in required
         ):
             raise VoiceError(cls._INVALID_RESPONSE)
         description = payload.get("description")
@@ -128,6 +130,7 @@ class BreezeVoiceCatalog:
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=self.REQUEST_TIMEOUT, connect=10),
                 allow_redirects=False,
+                proxy=self._proxy,
             ) as response:
                 if response.status != 200:
                     messages = {
@@ -136,9 +139,7 @@ class BreezeVoiceCatalog:
                         404: "找不到这个声音，请重新选择",
                         429: "声音目录访问太频繁，请稍后再试",
                     }
-                    raise VoiceError(
-                        messages.get(response.status, "BreezeBlue 暂时无法读取声音目录，请稍后再试")
-                    )
+                    raise VoiceError(messages.get(response.status, "BreezeBlue 暂时无法读取声音目录，请稍后再试"))
                 data = bytearray()
                 async for chunk in response.content.iter_chunked(64 * 1024):
                     data.extend(chunk)

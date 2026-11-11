@@ -46,12 +46,12 @@ def _snapshot(db, binding, zone):
     start = datetime.combine(today, time.min, zone).timestamp()
     end = datetime.combine(today + timedelta(days=1), time.min, zone).timestamp()
     where = " AND ".join(
-        f"CAST(json_extract(record_json, '$.binding.{field}') AS TEXT)=?"
-        for field in ("bot_id", "persona_id", "umo")
+        f"CAST(json_extract(record_json, '$.binding.{field}') AS TEXT)=?" for field in ("bot_id", "persona_id", "umo")
     )
     owner = tuple(str(binding[field]) for field in ("bot_id", "persona_id", "umo"))
     posts = [
-        json.loads(row[0]) for row in db.execute(
+        json.loads(row[0])
+        for row in db.execute(
             f"SELECT record_json FROM posts WHERE {where} AND source IN ('manual','autonomous') "
             "ORDER BY published_at DESC,tid LIMIT 8",
             owner,
@@ -67,12 +67,14 @@ def _snapshot(db, binding, zone):
         "AND CAST(json_extract(record_json, '$.binding.bot_id') AS TEXT)=?",
         (today.isoformat(), owner[0]),
     ).fetchone()[0]
-    comment_states = dict(db.execute(
-        f"SELECT status,COUNT(*) FROM comments WHERE {where} "
-        "AND tid IN (SELECT tid FROM posts WHERE status='published' AND published_at>=? AND published_at<?) "
-        "GROUP BY status",
-        (*owner, start, end),
-    ))
+    comment_states = dict(
+        db.execute(
+            f"SELECT status,COUNT(*) FROM comments WHERE {where} "
+            "AND tid IN (SELECT tid FROM posts WHERE status='published' AND published_at>=? AND published_at<?) "
+            "GROUP BY status",
+            (*owner, start, end),
+        )
+    )
     replies_today = db.execute(
         f"SELECT COUNT(*) FROM comments WHERE {where} AND status='replied' "
         "AND CAST(json_extract(record_json, '$.reply.created_at') AS REAL)>=? "
@@ -94,9 +96,9 @@ def _snapshot(db, binding, zone):
                 "created_at": datetime.fromtimestamp(post["published_at"], zone).isoformat(),
                 "status": (
                     "remote_deleted"
-                    if post["status"] == "published" and _value(
-                        db, f"comment_poll:{owner[0]}:{post['tid']}", {}
-                    ).get("remote_deleted_observed_at") is not None
+                    if post["status"] == "published"
+                    and _value(db, f"comment_poll:{owner[0]}:{post['tid']}", {}).get("remote_deleted_observed_at")
+                    is not None
                     else post["status"]
                 ),
                 "source": post["source"],
@@ -126,10 +128,7 @@ async def qzone_status(plugin, component):
     if component is None:
         return {**result, "status": "unavailable", "message": "空间组件暂未就绪。"}
     service = component.service
-    path = (
-        service.data_dir if service
-        else Path(get_astrbot_data_path()) / "plugin_data" / QZONE_ID
-    ) / "state.sqlite3"
+    path = (service.data_dir if service else Path(get_astrbot_data_path()) / "plugin_data" / QZONE_ID) / "state.sqlite3"
     binding = await asyncio.to_thread(_read_database, path, lambda db: _value(db, "binding"))
     if (
         not binding
@@ -157,7 +156,8 @@ async def qzone_status(plugin, component):
     if persona_id != binding["persona_id"]:
         return {**result, "message": "当前会话人设已改变，等待空间更新本地绑定。"}
     snapshot = await asyncio.to_thread(
-        _read_database, path,
+        _read_database,
+        path,
         lambda db: _snapshot(db, binding, ZoneInfo(settings.timezone)),
     )
     if not snapshot or await integrations._memory_persona_id(event, sp) != persona_id:
@@ -168,4 +168,3 @@ async def qzone_status(plugin, component):
         "status": "ready" if enabled else "disabled",
         "message": "这里只显示本地已记录的空间活动。",
     }
-

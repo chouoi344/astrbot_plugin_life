@@ -70,9 +70,7 @@ def build_background_event(context, binding):
     message = AstrBotMessage()
     message.type = MessageType(message_type)
     message.self_id = str(binding["bot_id"])
-    message.sender = MessageMember(
-        user_id=str(binding["admin_id"]), nickname=str(binding.get("admin_name", "管理员"))
-    )
+    message.sender = MessageMember(user_id=str(binding["admin_id"]), nickname=str(binding.get("admin_name", "管理员")))
     message.group_id = session_id if message_type == "GroupMessage" else ""
     message.session_id = session_id
     message.message_id = f"qzone-background-{time.time_ns()}"

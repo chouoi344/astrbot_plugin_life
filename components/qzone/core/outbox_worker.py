@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import time
 
-from .request_policy import QzoneDeferred
 from .comment_polling import post_reported_deleted
-
+from .request_policy import QzoneDeferred
 
 MEMORY_TIMEOUT = 30
 MEMORY_BATCH = 3
@@ -19,8 +18,7 @@ def _old_owner(service, binding):
     current = service.store.get_value("binding")
     if not current:
         return False
-    if any(str(current.get(key, "")) != str(binding.get(key, ""))
-           for key in ("bot_id", "persona_id")):
+    if any(str(current.get(key, "")) != str(binding.get(key, "")) for key in ("bot_id", "persona_id")):
         return True
     return current.get("umo") == binding.get("umo") and current.get("scope") != binding.get("scope")
 
@@ -33,14 +31,11 @@ async def _memory(service, task):
         payload = task["payload"]
         event = service.event_factory(service.context, payload["binding"])
         await service.require_runtime(event)
-        result = await asyncio.wait_for(
-            service.integrations.sync_memory(event, payload), timeout=MEMORY_TIMEOUT
-        )
+        result = await asyncio.wait_for(service.integrations.sync_memory(event, payload), timeout=MEMORY_TIMEOUT)
         service.store.finish_outbox(key, result)
     except asyncio.CancelledError:
         # The upstream memory call may already have written its event marker.
-        service.store.retry_outbox(key, "记忆同步中断，恢复后核对", time.time() + 60,
-                                   needs_reconcile=True)
+        service.store.retry_outbox(key, "记忆同步中断，恢复后核对", time.time() + 60, needs_reconcile=True)
         raise
     except Exception as exc:
         delay = min(3600, 30 * 2 ** min(int(task.get("attempts", 0)), 7))
@@ -94,17 +89,19 @@ async def _like(service, task):
         # pause/deletion state after that wait, immediately before the HTTP write.
         await service.verify_binding(event, binding, verify_identity=False)
         latest = service.store.get_post(payload["tid"])
-        if (not latest or latest["status"] == "deleted" or post_reported_deleted(service.store, latest)
-                or _old_owner(service, binding)
-                or service.store.get_value("paused", False)):
+        if (
+            not latest
+            or latest["status"] == "deleted"
+            or post_reported_deleted(service.store, latest)
+            or _old_owner(service, binding)
+            or service.store.get_value("paused", False)
+        ):
             raise ValueError("自赞条件已变化，本次尚未发送")
 
     try:
         result = await transport.like(payload["tid"], before_write=validate)
     except QzoneDeferred as exc:
-        service.store.defer_outbox(
-            key, "空间访问正在等待恢复", max(time.time() + 1, exc.retry_at), refund_attempt=True
-        )
+        service.store.defer_outbox(key, "空间访问正在等待恢复", max(time.time() + 1, exc.retry_at), refund_attempt=True)
         return
     except asyncio.CancelledError:
         service.store.stop_outbox(key, "自赞执行中断，结果待核对", uncertain=True)
@@ -122,12 +119,18 @@ async def _like(service, task):
         return
     if result.get("stage") in ("credentials", "cooldown", "preflight"):
         service.store.defer_outbox(
-            key, "自赞尚未发送，等待连接恢复",
-            max(time.time() + 60, float(result.get("retry_at") or 0)), refund_attempt=True,
+            key,
+            "自赞尚未发送，等待连接恢复",
+            max(time.time() + 60, float(result.get("retry_at") or 0)),
+            refund_attempt=True,
         )
         latest = service.store.get_post(payload["tid"])
-        if (not latest or latest["status"] == "deleted" or post_reported_deleted(service.store, latest)
-                or _old_owner(service, binding)):
+        if (
+            not latest
+            or latest["status"] == "deleted"
+            or post_reported_deleted(service.store, latest)
+            or _old_owner(service, binding)
+        ):
             service.store.stop_outbox(key, "自赞条件已变化，本次自动尝试结束")
         return
     attempted = int(service.store.get_outbox(key)["attempts"])
@@ -135,7 +138,8 @@ async def _like(service, task):
         service.store.stop_outbox(key, "自赞尝试次数已用完")
     elif result.get("retryable") is True or result.get("stage") == "connect":
         service.store.retry_outbox(
-            key, "自赞暂未完成，稍后再试",
+            key,
+            "自赞暂未完成，稍后再试",
             max(time.time() + LIKE_RETRY_SECONDS, float(result.get("retry_at") or 0)),
         )
     else:

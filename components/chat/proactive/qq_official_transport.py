@@ -6,11 +6,10 @@ import re
 from random import randint
 
 from aiohttp import ClientTimeout
-from botpy.http import Route
-
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import Plain
 from astrbot.core.platform.platform import PlatformStatus
+from botpy.http import Route
 
 from ...photo.core.qq_official_delivery import qq_media_upload_payload
 from .delivery_error import DeliveryError, ReplyRequired
@@ -130,14 +129,8 @@ class QQOfficialTransport:
             raise DeliveryError("failed", "QQ 官方机器人账号已变更")
         if on_attempt is not None:
             on_attempt()
-        result = await self._post_once(
-            http, "messages", {**payload, "msg_seq": randint(1, 10000)}
-        )
+        result = await self._post_once(http, "messages", {**payload, "msg_seq": randint(1, 10000)})
         message_id = result.get("id") if isinstance(result, dict) else None
-        if (
-            not isinstance(message_id, str)
-            or not message_id
-            or any(char.isspace() for char in message_id)
-        ):
+        if not isinstance(message_id, str) or not message_id or any(char.isspace() for char in message_id):
             raise DeliveryError("unknown", "QQ 官方接口未返回有效消息编号")
         return message_id

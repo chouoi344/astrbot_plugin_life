@@ -1,7 +1,8 @@
 name: astrbot_plugin_life
 display_name: 拟人生活
-desc: 日程驱动的 QQ 拟人陪伴：忙闲回复、主动聊天、语音、自拍和 QQ 空间。网页聊天支持语音。
-version: v1.3.11
+short_desc: 日程驱动的 QQ 拟人陪伴：生活状态、主动聊天、语音、自拍和 QQ 空间。
+desc: 日程驱动的 QQ 拟人陪伴：角色有自己的一天，聊天时带上当下的生活状态；会按设定的间隔和免打扰时段主动找你聊天、关心你提到的事；支持语音、自拍和 QQ 空间。网页聊天支持语音。
+version: v1.4.4
 author: 臭屁
 license: GPL-3.0-or-later
 repo: https://github.com/chouoi344/astrbot_plugin_life
@@ -11,6 +12,14 @@ support_platforms:
   - qq_official
   - qq_official_webhook
   - webchat
+tags:
+  - 拟人
+  - 陪伴
+  - 主动消息
+  - 日程
+  - 语音
+  - 生图
+  - QQ空间
 pages:
   - name: life
     title: 拟人生活

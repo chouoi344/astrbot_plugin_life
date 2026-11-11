@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from .caption import single_sentence
+from .caption import valid_caption
 from .dialogue import RequestProblem
 from .events import SilentGenerationEvent
 from .planning import daily_target, schedule_hash
@@ -42,13 +42,10 @@ def _too_close(service, binding) -> bool:
     previous = [
         post
         for post in service.store.list_posts(limit=200, include_deleted=True)
-        if post["source"] == "autonomous"
-        and str(post["binding"].get("bot_id")) == str(binding["bot_id"])
+        if post["source"] == "autonomous" and str(post["binding"].get("bot_id")) == str(binding["bot_id"])
     ]
     return bool(
-        previous
-        and service.now().timestamp() - previous[0]["published_at"]
-        < service.settings.min_gap_minutes * 60
+        previous and service.now().timestamp() - previous[0]["published_at"] < service.settings.min_gap_minutes * 60
     )
 
 
@@ -127,8 +124,10 @@ async def run_autonomous(service, event, binding, *, binding_verified=False):
         if plan["schedule_hash"] != schedule_hash(life):
             _terminal(service, plan, "cancelled", "schedule_changed")
             continue
-        if (plan.get("trigger") == "mood"
-                and service.store.mood_opportunity(day, binding["bot_id"]) not in (None, plan["plan_id"])):
+        if plan.get("trigger") == "mood" and service.store.mood_opportunity(day, binding["bot_id"]) not in (
+            None,
+            plan["plan_id"],
+        ):
             _terminal(service, plan, "skipped", "mood_already_triggered")
             continue
         # A newly selected skip policy also retires retries already waiting in
@@ -164,14 +163,12 @@ async def run_autonomous(service, event, binding, *, binding_verified=False):
                     service.store.finish_plan(plan["plan_id"], "uncertain")
                     break
                 if operation["status"] == "done":
-                    service.store.finish_plan(
-                        plan["plan_id"], "done", (operation.get("result") or {}).get("tid")
-                    )
+                    service.store.finish_plan(plan["plan_id"], "done", (operation.get("result") or {}).get("tid"))
                     break
                 draft = operation["payload"]["post"]
-                if draft["content"] != "" and not single_sentence(draft["content"]):
-                    # A write attempt fixes the payload. Do not rewrite a legacy
-                    # multi-sentence draft and replay it as the same operation.
+                if draft["content"] != "" and not valid_caption(draft["content"]):
+                    # A write attempt fixes the payload. Do not rewrite an
+                    # unusable legacy draft and replay it as the same operation.
                     _terminal(service, plan, "skipped", "legacy_caption_format")
                     break
                 original_images = draft.get("images") or []
@@ -190,22 +187,32 @@ async def run_autonomous(service, event, binding, *, binding_verified=False):
                 if not plan.get("share_decided"):
                     stage = "sharing_intent"
                     context, decision = await service.prepare_share(
-                        event, binding, plan["activity"], "" if plan.get("activity_slot") else life.get("outfit", ""),
-                        trigger=plan.get("trigger", "activity"), mood=plan.get("mood", ""),
+                        event,
+                        binding,
+                        plan["activity"],
+                        "" if plan.get("activity_slot") else life.get("outfit", ""),
+                        trigger=plan.get("trigger", "activity"),
+                        mood=plan.get("mood", ""),
                     )
                     await final_check()
                     if not decision["share"]:
                         _terminal(service, plan, "skipped", "nothing_to_share")
                         break
                     plan = service.store.update_plan(
-                        plan["plan_id"], cached_sharing_context=context,
-                        cached_share_focus=decision["focus"], share_decided=True,
+                        plan["plan_id"],
+                        cached_sharing_context=context,
+                        cached_share_focus=decision["focus"],
+                        share_decided=True,
                         cached_photo_type=decision.get("photo_type", "selfie"),
                     )
                 photo_type = plan.get("cached_photo_type", "selfie")
                 stage = photo_type
                 service.store.update_plan(
-                    plan["plan_id"], stage=stage, cached_summary="", cached_caption="", caption_decided=False,
+                    plan["plan_id"],
+                    stage=stage,
+                    cached_summary="",
+                    cached_caption="",
+                    caption_decided=False,
                 )
                 ended_activity = plan.get("activity_slot")
                 if ended_activity:
@@ -215,16 +222,13 @@ async def run_autonomous(service, event, binding, *, binding_verified=False):
                 else:
                     scene = f"当前活动：{plan['activity']}。"
                 subjects = {
-                    "selfie": "拍摄你自己的单人日常自拍。保持已设置角色参考形象，动作和构图自然。",
+                    "selfie": "拍一张你自己的单人日常自拍。保持已设置的角色参考形象，动作和构图自然。",
                     "food": "拍一张普通手机食物照，以这段活动里的食物为主。画面里没有人物。",
                     "scene": "拍一张普通手机场景照，以这段活动的地点、景色或环境为主。画面里没有人物。",
                 }
                 prompt = subjects[photo_type] + scene + "不混入今天其他时间的场景。"
                 if photo_type == "selfie":
-                    prompt += (
-                        "以角色参考形象和原有性格为主。男性角色可以拍得更随手一些，"
-                        "女性角色可以多留意角度和表情。性别只是风格倾向，保持角色自己的习惯。"
-                    )
+                    prompt += "拍法跟着角色自己的性格和审美走，不按性别套模板：像本人随手拍下的一张，不像棚拍，但角度、光线和神情是他愿意发出去被看见的样子，随手，但好看。"
                 if photo_type == "selfie" and not ended_activity and life.get("outfit"):
                     prompt += f"当前穿搭：{life['outfit']}。"
                 if plan.get("cached_share_focus"):
@@ -238,10 +242,14 @@ async def run_autonomous(service, event, binding, *, binding_verified=False):
                     generation = service.integrations.selfie(silent_event, prompt)
                 else:
                     generation = service.integrations.photo(
-                        silent_event, prompt, photo_type=photo_type, activity=ended_activity,
+                        silent_event,
+                        prompt,
+                        photo_type=photo_type,
+                        activity=ended_activity,
                     )
                 path, _ = await asyncio.wait_for(
-                    generation, service.settings.selfie_timeout,
+                    generation,
+                    service.settings.selfie_timeout,
                 )
                 if not Path(path).is_file():
                     raise ValueError("照片文件缺失")
@@ -259,32 +267,31 @@ async def run_autonomous(service, event, binding, *, binding_verified=False):
             await final_check()
             stage = "caption"
             text = plan.get("cached_caption")
-            if text and not single_sentence(text):
+            if text and not valid_caption(text):
                 plan = service.store.update_plan(plan["plan_id"], cached_caption="", caption_decided=False)
                 text = ""
             if not text and not plan.get("caption_decided"):
                 service.store.update_plan(plan["plan_id"], stage=stage)
                 text = await service.generate_caption(
-                    event, summary, activity=plan["activity"],
+                    event,
+                    summary,
+                    activity=plan["activity"],
                     sharing_context=plan.get("cached_sharing_context"),
                     focus=plan.get("cached_share_focus", ""),
-                    trigger=plan.get("trigger", "activity"), mood=plan.get("mood", ""),
+                    trigger=plan.get("trigger", "activity"),
+                    mood=plan.get("mood", ""),
                     mood_intensity=plan.get("mood_intensity", ""),
                 )
-                if not isinstance(text, str) or (text and not single_sentence(text)):
+                if not isinstance(text, str) or (text and not valid_caption(text)):
                     raise ValueError("配文内容无效")
                 plan = service.store.update_plan(plan["plan_id"], cached_caption=text, caption_decided=True)
             await final_check()
             stage = "publish"
             service.store.update_plan(plan["plan_id"], stage=stage)
-            await service._publish(
-                event, binding, text, images, summary, "autonomous", key, final_check=final_check
-            )
+            await service._publish(event, binding, text, images, summary, "autonomous", key, final_check=final_check)
             operation = service.store.get_operation(key)
             if operation and operation["status"] == "done":
-                service.store.finish_plan(
-                    plan["plan_id"], "done", (operation.get("result") or {}).get("tid")
-                )
+                service.store.finish_plan(plan["plan_id"], "done", (operation.get("result") or {}).get("tid"))
                 service.store.set_value("last_autonomous_result", "自主分享已完成")
                 service.store.set_value("last_autonomous_error", "")
             elif operation and operation["status"] in ("inflight", "uncertain"):
@@ -293,9 +300,7 @@ async def run_autonomous(service, event, binding, *, binding_verified=False):
             elif stopped:
                 _terminal(service, plan, "cancelled", stopped)
             else:
-                service.store.schedule_plan_retry(
-                    plan["plan_id"], "publish_rejected", now=service.now().timestamp()
-                )
+                service.store.schedule_plan_retry(plan["plan_id"], "publish_rejected", now=service.now().timestamp())
         except _StopOpportunity as exc:
             _terminal(service, plan, "cancelled", str(exc))
         except (QzoneDeferred, AccountUnavailableError) as exc:
@@ -322,15 +327,11 @@ async def run_autonomous(service, event, binding, *, binding_verified=False):
                     service.store.mark_operation_uncertain(key, "发布结果未取得，等待核对")
                 service.store.finish_plan(plan["plan_id"], "uncertain")
             elif operation and operation["status"] == "done":
-                service.store.finish_plan(
-                    plan["plan_id"], "done", (operation.get("result") or {}).get("tid")
-                )
+                service.store.finish_plan(plan["plan_id"], "done", (operation.get("result") or {}).get("tid"))
             else:
                 if not service.plan_is_current(plan):
                     _terminal(service, plan, "cancelled", "opportunity_expired")
                 else:
-                    service.store.schedule_plan_retry(
-                        plan["plan_id"], stage + "_failed", now=service.now().timestamp()
-                    )
+                    service.store.schedule_plan_retry(plan["plan_id"], stage + "_failed", now=service.now().timestamp())
                 service.store.set_value("last_autonomous_error", stage + "_failed")
         break

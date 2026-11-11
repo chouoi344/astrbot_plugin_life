@@ -10,13 +10,14 @@ import json
 import math
 import os
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
 import aiohttp
 
-from .config import DEFAULT_BASE_URL
+from .config import DEFAULT_BASE_URL, LEGACY_BASE_URL
 from .text import build_tts_body
 
 
@@ -45,6 +46,29 @@ class _Pending:
     started: bool = False
 
 
+SYNTHESIS_CONCURRENCY = 2
+CACHE_MAX_AGE_DAYS = 7
+CLEANUP_INTERVAL = 6 * 3600
+
+
+def cleanup_cache(directory: Path, max_age_days: int = CACHE_MAX_AGE_DAYS) -> int:
+    """Delete cached MP3 files older than ``max_age_days``; return how many."""
+    cutoff = time.time() - max_age_days * 86400
+    removed = 0
+    try:
+        files = list(Path(directory).glob("*.mp3"))
+    except OSError:
+        return 0
+    for path in files:
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def _error_message(status: int, payload: dict) -> str:
     code = payload.get("code", "")
     code = code.upper() if isinstance(code, str) else ""
@@ -66,10 +90,7 @@ def _error_message(status: int, payload: dict) -> str:
         return "积分不够了，请到 BreezeBlue 充值"
     if "LANGUAGE" in code or "language" in detail:
         return "这个声音或模型暂时不支持中文，请换一个声音再试"
-    if any(
-        word in detail
-        for word in ("too long", "max_length", "1000", "1,000", "maximum length", "character limit")
-    ):
+    if any(word in detail for word in ("too long", "max_length", "1000", "1,000", "maximum length", "character limit")):
         return "要念的文字太长了，请缩短到一千字以内"
     if status == 404:
         return "所选音色不可用，请到设置里重新选择"
@@ -113,9 +134,7 @@ def _is_mp3(data: bytes) -> bool:
         else (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)
     )
     sample_rate = (44100, 48000, 32000)[rate_index] // {3: 1, 2: 2, 0: 4}[version]
-    frame_size = (144000 if version == 3 else 72000) * bitrates[bitrate_index] // sample_rate + (
-        (third >> 1) & 1
-    )
+    frame_size = (144000 if version == 3 else 72000) * bitrates[bitrate_index] // sample_rate + ((third >> 1) & 1)
     return len(data) >= offset + frame_size
 
 
@@ -135,6 +154,7 @@ class BreezeClient:
         *,
         base_url: str = DEFAULT_BASE_URL,
         session: aiohttp.ClientSession | None = None,
+        proxy: str | None = None,
     ):
         if not api_key.strip() or not voice_id.strip():
             raise VoiceError("请先填写 BreezeBlue 密钥并选择音色")
@@ -143,9 +163,13 @@ class BreezeClient:
         self._base_url = base_url
         self._cache_dir = cache_dir.resolve()
         self._session = session
-        self._lock = asyncio.Lock()
+        self._proxy = proxy
+        # Two different lines may be synthesized at once; the same line is
+        # still shared through ``_pending`` (item 21).
+        self._slots = asyncio.Semaphore(SYNTHESIS_CONCURRENCY)
         self._pending: dict[str, _Pending] = {}
         self._closed = False
+        self._last_cleanup = 0.0
 
     async def close(self) -> None:
         self._closed = True
@@ -171,12 +195,10 @@ class BreezeClient:
             "payload": payload,
             "format": "mp3",
         }
-        if self._base_url != DEFAULT_BASE_URL:
+        if self._base_url != LEGACY_BASE_URL:
             # Keep the existing BreezeBlue cache usable after upgrading.
             cache_identity["base_url"] = self._base_url
-        cache_key = hashlib.sha256(
-            json.dumps(cache_identity, ensure_ascii=False, sort_keys=True).encode()
-        ).hexdigest()
+        cache_key = hashlib.sha256(json.dumps(cache_identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
         out_path = self._cache_dir / f"{cache_key}.mp3"
         pending = self._pending.get(cache_key)
         if pending is None:
@@ -205,7 +227,7 @@ class BreezeClient:
             task.exception()
 
     async def _synthesize(self, payload: dict, out_path: Path, pending: _Pending, voice_id: str) -> Path:
-        async with self._lock:
+        async with self._slots:
             if self._closed:
                 raise VoiceError("语音服务已经关闭")
             if out_path.is_file() and _is_mp3(await asyncio.to_thread(out_path.read_bytes)):
@@ -215,16 +237,17 @@ class BreezeClient:
             except asyncio.TimeoutError:
                 raise VoiceError("BreezeBlue 等待时间太长，请稍后到生成记录查看") from None
             await asyncio.to_thread(self._save, out_path, audio)
-            return out_path
+        if time.monotonic() - self._last_cleanup > CLEANUP_INTERVAL:
+            self._last_cleanup = time.monotonic()
+            await asyncio.to_thread(cleanup_cache, self._cache_dir)
+        return out_path
 
     @staticmethod
     def _save(path: Path, audio: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
         try:
-            with tempfile.NamedTemporaryFile(
-                dir=path.parent, suffix=".mp3", delete=False
-            ) as stream:
+            with tempfile.NamedTemporaryFile(dir=path.parent, suffix=".mp3", delete=False) as stream:
                 temporary = Path(stream.name)
                 stream.write(audio)
             os.replace(temporary, path)
@@ -252,6 +275,7 @@ class BreezeClient:
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.REQUEST_TIMEOUT, connect=15),
                 allow_redirects=False,
+                proxy=self._proxy,
             ) as response:
                 limit = self.MAX_AUDIO_BYTES if response.status == 200 else 64 * 1024
                 data = bytearray()
@@ -269,16 +293,12 @@ class BreezeClient:
                 )
         except asyncio.TimeoutError:
             message = (
-                "BreezeBlue 响应超时，语音可能已生成，请到生成记录查看"
-                if method == "POST"
-                else self._RECOVERY_ERROR
+                "BreezeBlue 响应超时，语音可能已生成，请到生成记录查看" if method == "POST" else self._RECOVERY_ERROR
             )
             raise VoiceError(message) from None
         except (aiohttp.ClientError, OSError):
             message = (
-                "连接 BreezeBlue 中断，语音可能已生成，请到生成记录查看"
-                if method == "POST"
-                else self._RECOVERY_ERROR
+                "连接 BreezeBlue 中断，语音可能已生成，请到生成记录查看" if method == "POST" else self._RECOVERY_ERROR
             )
             raise VoiceError(message) from None
 
@@ -293,9 +313,7 @@ class BreezeClient:
             raise VoiceError("BreezeBlue 返回的声音文件有问题，请稍后再试")
         return response.data
 
-    async def _wait(
-        self, response: _Response, payload: dict, attempt: int, *, recovery=False
-    ) -> None:
+    async def _wait(self, response: _Response, payload: dict, attempt: int, *, recovery=False) -> None:
         value = response.headers.get("retry-after")
         if value is None:
             meta = payload.get("meta")
@@ -345,8 +363,7 @@ class BreezeClient:
             error = response.payload()
             busy = response.status == 429 or (
                 response.status == 503
-                and error.get("code")
-                in ("GENERATION_CAPACITY_EXCEEDED", "GENERATION_CONCURRENCY_EXCEEDED")
+                and error.get("code") in ("GENERATION_CAPACITY_EXCEEDED", "GENERATION_CONCURRENCY_EXCEEDED")
             )
             if busy and attempt < self.MAX_RETRIES:
                 pending.started = False

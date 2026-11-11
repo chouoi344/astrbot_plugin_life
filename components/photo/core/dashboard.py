@@ -83,9 +83,7 @@ class PhotoDashboard:
     def unregister(self) -> None:
         routes = getattr(self.plugin.context, "registered_web_apis", None)
         if isinstance(routes, list):
-            routes[:] = [
-                row for row in routes if getattr(row[1], "__self__", None) is not self
-            ]
+            routes[:] = [row for row in routes if getattr(row[1], "__self__", None) is not self]
 
     def _is_dashboard_admin(self) -> bool:
         # The host has already verified the credential. Inspect the same token
@@ -101,11 +99,7 @@ class PhotoDashboard:
             return False
 
         authorization = request.headers.get("authorization", "").strip()
-        token = (
-            authorization.removeprefix("Bearer ").strip()
-            if authorization.startswith("Bearer ")
-            else ""
-        )
+        token = authorization.removeprefix("Bearer ").strip() if authorization.startswith("Bearer ") else ""
         if not token:
             token = request.cookies.get("astrbot_dashboard_jwt", "").strip()
         try:
@@ -123,10 +117,7 @@ class PhotoDashboard:
             isinstance(claims, dict)
             and claims.get("username") == username
             and claims.get("token_type") in (None, "dashboard", "access")
-            and not any(
-                field in claims
-                for field in ("scope", "scopes", "plugin_name", "page_name")
-            )
+            and not any(field in claims for field in ("scope", "scopes", "plugin_name", "page_name"))
         )
 
     def _manifest(self, snapshot, *, admin: bool):
@@ -141,13 +132,8 @@ class PhotoDashboard:
                 "config_error": bool(self.plugin.config_error),
                 "library_error": library_error,
                 "can_write": admin and not library_error,
-                "revisions": {
-                    group: reference_revision(snapshot[group]) for group in _GROUPS
-                },
-                **{
-                    group: [{"index": index} for index, _ in enumerate(snapshot[group])]
-                    for group in _GROUPS
-                },
+                "revisions": {group: reference_revision(snapshot[group]) for group in _GROUPS},
+                **{group: [{"index": index} for index, _ in enumerate(snapshot[group])] for group in _GROUPS},
             },
             headers=_NO_CACHE,
         )
@@ -162,10 +148,7 @@ class PhotoDashboard:
         revisions = query.getlist("revision")
         if (
             set(query.keys()) not in ({"group", "index"}, {"group", "index", "revision"})
-            or (
-                "revision" in query
-                and (len(revisions) != 1 or not _valid_revision(revisions[0]))
-            )
+            or ("revision" in query and (len(revisions) != 1 or not _valid_revision(revisions[0])))
             or len(groups) != 1
             or groups[0] not in _GROUPS
             or len(indices) != 1
@@ -211,9 +194,7 @@ class PhotoDashboard:
         if content_type != "application/json":
             return _error("请从自然照片面板上传一张图片。", 415)
         length = request.headers.get("content-length")
-        if length is not None and (
-            not re.fullmatch(r"[0-9]{1,9}", length) or int(length) > _MAX_BODY_BYTES
-        ):
+        if length is not None and (not re.fullmatch(r"[0-9]{1,9}", length) or int(length) > _MAX_BODY_BYTES):
             return _error(_TOO_LARGE, 413)
         raw = await request.body()
         if len(raw) > _MAX_BODY_BYTES:
@@ -233,9 +214,7 @@ class PhotoDashboard:
             return _error("参考图版本无效，请刷新页面后重试。", 400)
 
         group, index, image = payload["group"], payload["index"], payload["image"]
-        if group not in _GROUPS or (
-            index is not None and (type(index) is not int or index < 0)
-        ):
+        if group not in _GROUPS or (index is not None and (type(index) is not int or index < 0)):
             return _error("参考素材分类或编号无效。", 400)
         if index is not None and revision is None:
             return _error("请刷新页面后再替换参考图。", 409)
@@ -254,9 +233,7 @@ class PhotoDashboard:
             return _error(_TOO_LARGE, 413)
 
         try:
-            snapshot = await asyncio.to_thread(
-                library.save_image, group, index, data, revision
-            )
+            snapshot = await asyncio.to_thread(library.save_image, group, index, data, revision)
         except ReferenceConflict as exc:
             return _error(str(exc), 409)
         except PhotoError:
@@ -278,10 +255,7 @@ class PhotoDashboard:
         if content_type != "application/json":
             return _error("请从自然照片面板删除参考图。", 415)
         length = request.headers.get("content-length")
-        if length is not None and (
-            not re.fullmatch(r"[0-9]{1,9}", length)
-            or int(length) > _MAX_DELETE_BODY_BYTES
-        ):
+        if length is not None and (not re.fullmatch(r"[0-9]{1,9}", length) or int(length) > _MAX_DELETE_BODY_BYTES):
             return _error("删除内容无效。", 413)
         raw = await request.body()
         if len(raw) > _MAX_DELETE_BODY_BYTES:
@@ -297,17 +271,10 @@ class PhotoDashboard:
         }:
             return _error("删除内容无效。", 400)
         group, index, revision = payload["group"], payload["index"], payload["revision"]
-        if (
-            group not in _GROUPS
-            or type(index) is not int
-            or index < 0
-            or not _valid_revision(revision)
-        ):
+        if group not in _GROUPS or type(index) is not int or index < 0 or not _valid_revision(revision):
             return _error("参考素材分类、编号或版本无效。", 400)
         try:
-            snapshot = await asyncio.to_thread(
-                library.delete_image, group, index, revision
-            )
+            snapshot = await asyncio.to_thread(library.delete_image, group, index, revision)
         except ReferenceConflict as exc:
             return _error(str(exc), 409)
         except ValueError:

@@ -20,9 +20,7 @@ _GROUP_INDEX = re.compile(
 _INDEX_NUMBER = {"一": 1, "二": 2, "三": 3, "四": 4, "1": 1, "2": 2, "3": 3, "4": 4}
 _PREVIOUS_GROUP = r"上一组|前一组"
 _LATEST_MULTI_GROUP = r"刚才(?:的)?[这那](?:一)?组|这(?:一)?组|最近(?:的)?一组"
-_GROUP_QUALIFIER = re.compile(
-    rf"(?P<previous>{_PREVIOUS_GROUP})|(?P<latest_multi>{_LATEST_MULTI_GROUP})"
-)
+_GROUP_QUALIFIER = re.compile(rf"(?P<previous>{_PREVIOUS_GROUP})|(?P<latest_multi>{_LATEST_MULTI_GROUP})")
 _HISTORICAL_PHOTO = re.compile(
     rf"上(?:一)?张|{_PREVIOUS_GROUP}|刚(?:才|刚)(?:[这那][张组]|拍的|发(?:给我)?的|的(?:照片|图)|(?=\s*第))|刚拍的(?:那张|照片)|前一张|旧图"
 )
@@ -31,13 +29,9 @@ _SINGULAR_OLD_PHOTO = re.compile(
     rf"(?:上(?:一)?|前一|刚(?:才|刚)(?:的|拍的|发(?:给我)?的)?[这那](?:一)?|刚拍的那)张(?!\s*{_NON_PHOTO_NOUN})"
     r"|刚才(?:拍|发)?的(?:那张)?(?:照片|图(?!表))|旧照片|旧图"
 )
-_NEGATED_OLD_VIEW = re.compile(
-    r"(?:不要|别|不用|不必|无需|不需要|不)(?:再)?(?:看|参考)"
-)
+_NEGATED_OLD_VIEW = re.compile(r"(?:不要|别|不用|不必|无需|不需要|不)(?:再)?(?:看|参考)")
 _PHOTO_TARGET = re.compile(rf"[这那](?:一)?张(?!\s*{_NON_PHOTO_NOUN})")
-_OBJECT_EDIT = re.compile(
-    r"(?:把|将)[这那](?![^，,。；;\n]*日程)[^，,。；;\n]{1,20}?(?:改成|调整)"
-)
+_OBJECT_EDIT = re.compile(r"(?:把|将)[这那](?![^，,。；;\n]*日程)[^，,。；;\n]{1,20}?(?:改成|调整)")
 _IMAGE_LIMIT = re.compile(r"其他别变|图片|画幅")
 _ATTACHMENT_ONLY = re.compile(
     r"(?:只|仅)(?:用|使用|参考|看)[^，,。；;\n]{0,12}(?:附件|上传的(?:照片|图)|本轮(?:照片|图片|图)|这次发的(?:照片|图))"
@@ -46,9 +40,7 @@ _NEGATED_CLAUSE = re.compile(
     r"^(?:这次|请)?(?:不要|别|不用|不必)(?:再)?(?:用|使用|参考|看|换|改|修|调|编辑|拍|来|重发|发)"
     rf"|^(?:这次|请)?(?:不是|不要|别|不用|不选|排除)(?:再)?(?:选)?(?:{_GROUP_QUALIFIER.pattern})"
 )
-_FRESH_PHOTO = re.compile(
-    r"(?:拍|来)(?:一)?张\s*(?:全新|新(?:的)?(?:照片|图片|自拍|图))"
-)
+_FRESH_PHOTO = re.compile(r"(?:拍|来)(?:一)?张\s*(?:全新|新(?:的)?(?:照片|图片|自拍|图))")
 _CONTINUE_PHOTO = re.compile(
     r"再(?:帮我|给我)?(?:拍|来)(?:一)?张"
     r"|续拍|换(?:个|一个|一下)?(?:拍摄)?(?:角度|机位)"
@@ -129,9 +121,9 @@ class PhotoContextStore:
             groups = [latest]
             if "previous_photos" in group:
                 previous = self._load_records(scope, group["previous_photos"])
-                if latest[0].group_id == previous[0].group_id or {
-                    record.photo_id for record in latest
-                }.intersection(record.photo_id for record in previous):
+                if latest[0].group_id == previous[0].group_id or {record.photo_id for record in latest}.intersection(
+                    record.photo_id for record in previous
+                ):
                     raise ValueError("照片上下文分组无效")
                 groups.append(previous)
             self._groups[scope] = groups
@@ -176,10 +168,7 @@ class PhotoContextStore:
                 raise ValueError("照片上下文文件名无效")
             if records and (
                 row["group_id"] != records[0].group_id
-                or any(
-                    r.photo_id == row["photo_id"] or r.index == row["index"]
-                    for r in records
-                )
+                or any(r.photo_id == row["photo_id"] or r.index == row["index"] for r in records)
             ):
                 raise ValueError("照片上下文分组无效")
             records.append(
@@ -206,10 +195,7 @@ class PhotoContextStore:
             for records in groups:
                 usable = []
                 for index, record in enumerate(records):
-                    if (
-                        record.path.is_file()
-                        and record.path.resolve().parent == self.cache_dir
-                    ):
+                    if record.path.is_file() and record.path.resolve().parent == self.cache_dir:
                         usable.append(record)
                     elif record.reference_images:
                         records[index] = replace(record, reference_images=())
@@ -221,14 +207,8 @@ class PhotoContextStore:
             # Keep the original slots so an evicted target cannot change which
             # batch a group qualifier denotes.
             available[scope] = retained
-            if not any(
-                record.photo_id == self._selected[scope]
-                for records in retained
-                for record in records
-            ):
-                self._selected[scope] = next(
-                    records for records in retained if records
-                )[-1].photo_id
+            if not any(record.photo_id == self._selected[scope] for records in retained for record in records):
+                self._selected[scope] = next(records for records in retained if records)[-1].photo_id
         return available
 
     def _save(self):
@@ -272,17 +252,11 @@ class PhotoContextStore:
         groups = self._groups.get(record.scope, [])
         records = groups[0] if groups else []
         if not records or records[0].group_id != record.group_id:
-            if groups and (
-                record.index != 1 or groups[-1][0].group_id == record.group_id
-            ):
+            if groups and (record.index != 1 or groups[-1][0].group_id == record.group_id):
                 return
             groups = [[], *groups[:1]]
             records = []
-        records = [
-            r
-            for r in records
-            if r.index != record.index and r.photo_id != record.photo_id
-        ]
+        records = [r for r in records if r.index != record.index and r.photo_id != record.photo_id]
         records.append(copy.deepcopy(record))
         groups[0] = sorted(records, key=lambda photo: photo.index)
         self._groups[record.scope] = groups
@@ -293,34 +267,17 @@ class PhotoContextStore:
         available = self._prune().get(scope, ())
         selected = photo_id or self._selected.get(scope, "")
         return next(
-            (
-                copy.deepcopy(record)
-                for records in available
-                for record in records
-                if record.photo_id == selected
-            ),
+            (copy.deepcopy(record) for records in available for record in records if record.photo_id == selected),
             None,
         )
 
-    def explicit_group_reference(
-        self, scope: PhotoScope, user_text: str
-    ) -> tuple[bool, PhotoRecord | None]:
+    def explicit_group_reference(self, scope: PhotoScope, user_text: str) -> tuple[bool, PhotoRecord | None]:
         """Resolve a group-qualified ordinal, including an unavailable explicit target."""
         requested = [
-            clause.strip()
-            for clause in _CLAUSES.split(user_text)
-            if not _NEGATED_CLAUSE.search(clause.strip())
+            clause.strip() for clause in _CLAUSES.split(user_text) if not _NEGATED_CLAUSE.search(clause.strip())
         ]
-        qualifiers = {
-            match.lastgroup
-            for clause in requested
-            for match in _GROUP_QUALIFIER.finditer(clause)
-        }
-        indices = {
-            _INDEX_NUMBER.get(match.group(1))
-            for clause in requested
-            for match in _photo_ordinals(clause)
-        }
+        qualifiers = {match.lastgroup for clause in requested for match in _GROUP_QUALIFIER.finditer(clause)}
+        indices = {_INDEX_NUMBER.get(match.group(1)) for clause in requested for match in _photo_ordinals(clause)}
         if not qualifiers or not indices:
             return False, None
         if len(qualifiers) != 1 or len(indices) != 1 or None in indices:
@@ -357,11 +314,7 @@ class PhotoContextStore:
             return None
         requested = [clause for clause in clauses if not _NEGATED_CLAUSE.search(clause)]
         matched_group, group_record = self.explicit_group_reference(scope, user_text)
-        if (
-            has_new_images
-            and not matched_group
-            and not any(_HISTORICAL_PHOTO.search(clause) for clause in requested)
-        ):
+        if has_new_images and not matched_group and not any(_HISTORICAL_PHOTO.search(clause) for clause in requested):
             return None
         mentions_photo = any(_PREVIOUS_PHOTO.search(clause) for clause in clauses)
         indices = {
@@ -379,10 +332,7 @@ class PhotoContextStore:
         photo_target = (
             matched_group
             or bool(indices)
-            or any(
-                _SINGULAR_OLD_PHOTO.search(clause) or _PHOTO_TARGET.search(clause)
-                for clause in requested
-            )
+            or any(_SINGULAR_OLD_PHOTO.search(clause) or _PHOTO_TARGET.search(clause) for clause in requested)
             or (
                 not has_new_images
                 and _IMAGE_LIMIT.search(user_text)
@@ -391,8 +341,7 @@ class PhotoContextStore:
         )
         # A definite photo target is enough to give the model its visual context.
         if not continues and (
-            not photo_target
-            or (not edits and any(_RESEND_PHOTO.search(clause) for clause in requested))
+            not photo_target or (not edits and any(_RESEND_PHOTO.search(clause) for clause in requested))
         ):
             return None
         if matched_group:
@@ -406,19 +355,14 @@ class PhotoContextStore:
             if not groups:
                 return None
             records = groups[0]
-            if (
-                index > 1
-                and len(groups) == 2
-                and all(record.index == 1 for record in self._groups[scope][0])
-            ):
+            if index > 1 and len(groups) == 2 and all(record.index == 1 for record in self._groups[scope][0]):
                 records = groups[1]
             return next(
                 (copy.deepcopy(record) for record in records if record.index == index),
                 None,
             )
         if any(
-            _NEGATED_CLAUSE.search(clause)
-            and (_PREVIOUS_PHOTO.search(clause) or _GROUP_INDEX.search(clause))
+            _NEGATED_CLAUSE.search(clause) and (_PREVIOUS_PHOTO.search(clause) or _GROUP_INDEX.search(clause))
             for clause in clauses
         ):
             return None
